@@ -110,8 +110,12 @@ const ScanReceiptScreen: React.FC = () => {
       }
 
       const parsedItems = parsed.items.length ? parsed.items : mockItems;
+      const normalizedItems: ReceiptItem[] = parsedItems.map((item, index) => ({
+        ...item,
+        id: item.id ?? `${item.name}-${index}`,
+      }));
       const parsedTotals = parsed.totals ?? mockTotals;
-      const computedSubtotal = parsedItems.reduce(
+      const computedSubtotal = normalizedItems.reduce(
         (sum, item) => sum + item.price * (item.quantity || 1),
         0,
       );
@@ -127,7 +131,7 @@ const ScanReceiptScreen: React.FC = () => {
           : undefined;
 
       navigation.navigate('ReceiptReview', {
-        items: parsedItems,
+        items: normalizedItems,
         restaurantName: parsed.restaurantName ?? 'Receipt',
         totals: parsedTotals,
         mismatchWarning,

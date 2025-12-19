@@ -16,8 +16,9 @@ export default function ReceiptReviewScreen() {
   const { items, totals, restaurantName, mismatchWarning } = route.params;
 
   const [editableItems, setEditableItems] = React.useState(
-    items.map((item) => ({
+    items.map((item, index) => ({
       ...item,
+      id: item.id ?? `${item.name}-${index}`,
       priceStr: item.price.toFixed(2),
     })),
   );
