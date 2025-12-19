@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { RootStackParamList, ReceiptItem, Totals } from '../types/navigation';
-import { parseReceiptWithOpenAI } from '../services/receiptOcr';
+import { parseReceiptViaBackend } from '../services/receiptApi';
 import { GradientHeader } from '../components/GradientHeader';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'ScanReceipt'>;
@@ -99,7 +99,7 @@ const ScanReceiptScreen: React.FC = () => {
         throw new Error('No image base64 found');
       }
 
-      const parsed = await parseReceiptWithOpenAI(imageBase64);
+      const parsed = await parseReceiptViaBackend(imageBase64);
 
       if (!parsed.items.length) {
         setError(

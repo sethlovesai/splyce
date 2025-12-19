@@ -100,17 +100,12 @@ const HomeScreen: React.FC = () => {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         {/* <View style={styles.heroOverlay} /> */}
-        <View style={styles.heroHeader}>
-          <View style={styles.brandRow}>
-            <Image source={require('../../assets/images/splyce-logo.png')} style={styles.logo} />
-            <View>
-              {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
-              <Text style={styles.heroTitle}>Splyce.ai</Text>
-            </View>
+        <View style={styles.brandRow}>
+          <Image source={require('../../assets/images/splyce-logo.png')} style={styles.logo} />
+          <View>
+            {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
+            <Text style={styles.heroTitle}>Splyce.ai</Text>
           </View>
-          <TouchableOpacity style={styles.settingsIcon} onPress={() => router.push('/Settings')}>
-            <Ionicons name="settings-outline" size={22} color="#ffffff" />
-          </TouchableOpacity>
         </View>
         <Text style={styles.heroText}>Scan, split, and settle up in seconds.</Text>
       </View>
@@ -144,7 +139,7 @@ const HomeScreen: React.FC = () => {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Previous Splices</Text>
-          <TouchableOpacity onPress={() => router.push('/BillHistory')}>
+          <TouchableOpacity>
             <Text style={styles.sectionButtonText}>View All</Text>
           </TouchableOpacity>
         </View>
@@ -204,11 +199,6 @@ const styles = StyleSheet.create({
     // backgroundColor: '#2acd84',
     overflow: 'hidden',
   },
-  heroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
   heroOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#39d98a',
@@ -225,9 +215,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-  },
-  settingsIcon: {
-    padding: 8,
   },
   heroSubtitle: {
     color: '#e8ffef',
