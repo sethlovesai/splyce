@@ -101,11 +101,20 @@ const HomeScreen: React.FC = () => {
       <View style={styles.hero}>
         {/* <View style={styles.heroOverlay} /> */}
         <View style={styles.brandRow}>
-          <Image source={require('../../assets/images/splyce-logo.png')} style={styles.logo} />
-          <View>
-            {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
-            <Text style={styles.heroTitle}>Splyce.ai</Text>
+          <View style={styles.brandLeft}>
+            <Image source={require('../../assets/images/splyce-logo.png')} style={styles.logo} />
+            <View>
+              {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
+              <Text style={styles.heroTitle}>Splyce.ai</Text>
+            </View>
           </View>
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={() => router.push('/Settings')}
+            accessibilityLabel="Open settings"
+          >
+            <Ionicons name="settings-outline" size={22} color="#ffffff" />
+          </TouchableOpacity>
         </View>
         <Text style={styles.heroText}>Scan, split, and settle up in seconds.</Text>
       </View>
@@ -139,7 +148,7 @@ const HomeScreen: React.FC = () => {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Previous Splices</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/BillHistory')}>
             <Text style={styles.sectionButtonText}>View All</Text>
           </TouchableOpacity>
         </View>
@@ -209,6 +218,12 @@ const styles = StyleSheet.create({
     marginVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  brandLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
   },
   logo: {
@@ -230,6 +245,14 @@ const styles = StyleSheet.create({
     color: '#e8ffef',
     marginTop: 5,
     fontSize: 15,
+  },
+  settingsButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
   cardGrid: {
     marginTop: -28,
