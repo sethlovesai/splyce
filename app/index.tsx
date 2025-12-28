@@ -11,8 +11,11 @@ export default function IndexRoute() {
 
   useEffect(() => {
     const checkOnboarding = async () => {
-      const completed = await AsyncStorage.getItem(ONBOARDING_KEY);
-      router.replace(completed ? '/Home' : '/Onboarding');
+      // const completed = await AsyncStorage.getItem(ONBOARDING_KEY);
+      // router.replace(completed ? '/Home' : '/Onboarding');
+      // Always show onboarding for testing; restore storage check later.
+      await AsyncStorage.getItem(ONBOARDING_KEY);
+      router.replace('/Onboarding');
       setIsChecking(false);
     };
 
@@ -29,4 +32,3 @@ export default function IndexRoute() {
     </View>
   );
 }
-

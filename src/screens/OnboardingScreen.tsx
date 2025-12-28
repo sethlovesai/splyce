@@ -9,6 +9,7 @@ import {
   Dimensions,
   ListRenderItem,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -35,6 +36,7 @@ const slides: OnboardingSlide[] = [
     body:
       "We'll automatically pull out the items, prices, tax, tip, and total so you don't have to type anything.",
     cta: 'Next',
+    image: require('../../assets/images/onboarding-1.png'),
   },
   {
     key: 'choose-1',
@@ -43,20 +45,23 @@ const slides: OnboardingSlide[] = [
     body:
       'Then pass the phone around so each friend can quickly select theirs too — shared items can be split.',
     cta: 'Next',
+    image: require('../../assets/images/onboarding-2.png'),
   },
   {
     key: 'choose-2',
     title: 'Choose what you ordered',
     subtitle: 'Each person selects their dishes.',
     body: 'It keeps everything organized so the split is fast and accurate.',
-    cta: "That's everyone!",
+    cta: "Next",
+    image: require('../../assets/images/onboarding-3.png'),
   },
   {
     key: 'owe',
     title: 'Who Owes What',
     subtitle: 'See a clear breakdown.',
     body: "Review each person's items and costs before settling up.",
-    cta: "That's everyone!",
+    cta: "Next",
+    image: require('../../assets/images/onboarding-4.png'),
   },
   {
     key: 'settle',
@@ -64,7 +69,17 @@ const slides: OnboardingSlide[] = [
     subtitle: 'Send the totals in one tap.',
     body:
       'Get a simple breakdown of what each person owes, including shared items, tax, and tip.',
-    cta: 'Continue',
+    cta: 'Next',
+    image: require('../../assets/images/onboarding-5.png'),
+  },
+  {
+    key: 'splyce',
+    title: 'Splyce it up',
+    subtitle: 'Ready to share the split.',
+    body:
+      'Get a simple breakdown of what each person owes, including shared items, tax, and tip. When it looks right, send it to the group in a tap.',
+    cta: 'Get Started ',
+    image: require('../../assets/images/onboarding-6.png'),
   },
 ];
 
@@ -72,6 +87,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const listRef = useRef<FlatList<OnboardingSlide>>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const scrollX = useRef(new Animated.Value(0)).current;
 
   const viewConfig = useMemo(
     () => ({
@@ -97,22 +113,20 @@ export default function OnboardingScreen() {
     router.replace('/Home');
   };
 
-  const handleBack = () => {
-    if (activeIndex > 0) {
-      listRef.current?.scrollToIndex({ index: activeIndex - 1, animated: true });
-    }
+  const handleSkip = async () => {
+    await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+    router.replace('/Home');
   };
 
   const renderItem: ListRenderItem<OnboardingSlide> = ({ item }) => (
     <View style={styles.slide}>
       <View style={styles.topRow}>
         <TouchableOpacity
-          style={[styles.backButton, activeIndex === 0 && styles.backButtonHidden]}
-          onPress={handleBack}
-          disabled={activeIndex === 0}
-          accessibilityLabel="Go back"
+          style={styles.skipButton}
+          onPress={handleSkip}
+          accessibilityLabel="Skip onboarding"
         >
-          <Ionicons name="chevron-back" size={20} color="#5b4ddb" />
+          <Text style={styles.skipText}>Skip</Text>
         </TouchableOpacity>
       </View>
 
@@ -136,7 +150,7 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <FlatList
+      <Animated.FlatList
         ref={listRef}
         data={slides}
         renderItem={renderItem}
@@ -146,17 +160,40 @@ export default function OnboardingScreen() {
         showsHorizontalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged.current}
         viewabilityConfig={viewConfig}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+          { useNativeDriver: false },
+        )}
+        scrollEventThrottle={16}
         getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
       />
 
       <View style={styles.footer}>
         <View style={styles.dots}>
-          {slides.map((slide, index) => (
-            <View
-              key={slide.key}
-              style={[styles.dot, index === activeIndex && styles.dotActive]}
-            />
-          ))}
+          {slides.map((slide, index) => {
+            const inputRange = [
+              (index - 1) * SCREEN_WIDTH,
+              index * SCREEN_WIDTH,
+              (index + 1) * SCREEN_WIDTH,
+            ];
+            const dotWidth = scrollX.interpolate({
+              inputRange,
+              outputRange: [8, 22, 8],
+              extrapolate: 'clamp',
+            });
+            const dotColor = scrollX.interpolate({
+              inputRange,
+              outputRange: ['#d7d2ff', '#5b4ddb', '#d7d2ff'],
+              extrapolate: 'clamp',
+            });
+
+            return (
+              <Animated.View
+                key={slide.key}
+                style={[styles.dot, { width: dotWidth, backgroundColor: dotColor }]}
+              />
+            );
+          })}
         </View>
         <TouchableOpacity style={styles.ctaButton} onPress={handleNext} activeOpacity={0.9}>
           <Text style={styles.ctaText}>{slides[activeIndex]?.cta ?? 'Next'}</Text>
@@ -180,16 +217,16 @@ const styles = StyleSheet.create({
   topRow: {
     height: 32,
     justifyContent: 'center',
+    alignItems: 'flex-end',
   },
-  backButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+  skipButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  backButtonHidden: {
-    opacity: 0,
+  skipText: {
+    color: '#5b4ddb',
+    fontWeight: '700',
+    fontSize: 14,
   },
   imageWrap: {
     flex: 1.1,
@@ -247,14 +284,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dot: {
-    width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#d7d2ff',
-  },
-  dotActive: {
-    width: 22,
-    backgroundColor: '#5b4ddb',
   },
   ctaButton: {
     backgroundColor: '#5b4ddb',

@@ -134,6 +134,16 @@ const SelectItemsScreen: React.FC = () => {
     });
   };
 
+  const handleDone = () => {
+    const currentIndex = participants.indexOf(activeParticipant);
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < participants.length) {
+      setActiveParticipant(participants[nextIndex]);
+      return;
+    }
+    calculateSplit();
+  };
+
   return (
     <View style={styles.container}>
       <GradientHeader title="Select Your Items" subtitle={`${restaurantName} • ${expandedItems.length} items`} />
@@ -208,22 +218,19 @@ const SelectItemsScreen: React.FC = () => {
       </ScrollView>
 
       <View style={styles.footer}>
-        <View>
-          <Text style={styles.footerLabel}>Items selected</Text>
-          <Text style={styles.footerValue}>
-            {itemsSelectedCount} / {totalItems}
-          </Text>
-        </View>
+        <Text style={styles.footerHint}>
+          Items selected {itemsSelectedCount}/{totalItems}
+        </Text>
         <TouchableOpacity
           style={[
             styles.calculateButton,
             itemsSelectedCount === 0 && styles.calculateButtonDisabled,
           ]}
           disabled={itemsSelectedCount === 0}
-          onPress={calculateSplit}
+          onPress={handleDone}
           activeOpacity={0.9}
         >
-          <Text style={styles.calculateText}>Calculate Split</Text>
+          <Text style={styles.calculateText}>Done</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -336,34 +343,31 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     padding: 30,
+    paddingTop: 20,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderColor: '#e6ecf2',
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  footerLabel: {
+  footerHint: {
+    fontSize: 12,
     color: '#6b7b8e',
-  },
-  footerValue: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f1b2d',
+    marginBottom: 10,
   },
   calculateButton: {
-    backgroundColor: '#1ec873',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
+    alignSelf: 'stretch',
+    backgroundColor: '#5b4ddb',
+    paddingVertical: 16,
+    borderRadius: 999,
+    alignItems: 'center',
   },
   calculateButtonDisabled: {
-    backgroundColor: '#9cd9b7',
+    opacity: 0.6,
   },
   calculateText: {
     color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 15,
+    fontWeight: '800',
+    fontSize: 16,
   },
 });
 
