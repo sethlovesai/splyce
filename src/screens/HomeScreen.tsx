@@ -154,7 +154,35 @@ const HomeScreen: React.FC = () => {
         </View>
 
         {receipts.length === 0 ? (
-          <Text style={styles.emptyText}>No previous splices yet.</Text>
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="sparkles-outline" size={22} color="#1ec873" />
+            </View>
+            <View style={styles.emptyCopy}>
+              <Text style={styles.emptyTitle}>No splices yet</Text>
+              <Text style={styles.emptySubtitle}>
+                Scan your first receipt to start tracking and splitting bills.
+              </Text>
+              <View style={styles.emptyActions}>
+                <TouchableOpacity
+                  style={styles.emptyPrimaryButton}
+                  onPress={() => router.push('/ScanReceipt')}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="scan-outline" size={16} color="#ffffff" />
+                  <Text style={styles.emptyPrimaryText}>Scan Receipt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.emptySecondaryButton}
+                  onPress={handleUploadReceipt}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="image-outline" size={16} color="#1ec873" />
+                  <Text style={styles.emptySecondaryText}>Upload Photo</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
         ) : (
           <FlatList
             data={receipts}
@@ -360,6 +388,74 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     color: '#7a8a9b',
+  },
+  emptyCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e6ecf2',
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'flex-start',
+  },
+  emptyIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#e8fff2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyCopy: {
+    flex: 1,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f1b2d',
+  },
+  emptySubtitle: {
+    marginTop: 4,
+    color: '#6b7b8e',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  emptyActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  emptyPrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1ec873',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  emptyPrimaryText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  emptySecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f1f7f4',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d9eee2',
+  },
+  emptySecondaryText: {
+    color: '#1ec873',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

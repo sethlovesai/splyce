@@ -5,6 +5,7 @@ import { GradientHeader } from '../components/GradientHeader';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
+import { clearReceipts } from '../storage/receipts';
 
 const accent = '#1ec873';
 const sectionBg = '#ffffff';
@@ -19,7 +20,13 @@ export default function SettingsScreen() {
       'This will permanently delete all saved receipts. This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear', style: 'destructive', onPress: () => {} }, // placeholder
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            await clearReceipts();
+          },
+        },
       ],
     );
   };

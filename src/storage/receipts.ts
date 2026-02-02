@@ -44,3 +44,11 @@ export async function removeReceipt(id: string): Promise<void> {
     // ignore
   }
 }
+
+export async function clearReceipts(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    // ignore
+  }
+}

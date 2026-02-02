@@ -32,57 +32,85 @@ export default function BillHistoryScreen() {
     <View style={styles.container}>
       <GradientHeader title="Bill History" subtitle="Your spending insights" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.statsRow}>
-          <StatCard label="Total Spent" value={`$${totalSpent.toFixed(0)}`} />
-          <StatCard label="Avg/Meal" value={`$${avgMeal.toFixed(0)}`} />
-          <StatCard label="Bills Split" value={`${receipts.length}`} />
-        </View>
-
-        <View style={styles.insightCard}>
-          <View style={styles.insightIcon}>
-            <Ionicons name="trending-up" size={22} color="#7b3aed" />
-          </View>
-          <View>
-            <Text style={styles.insightTitle}>Monthly Insights</Text>
-            <Text style={styles.insightSubtitle}>
-              You spent ${totalSpent.toFixed(0)} across {receipts.length} bills
+        {receipts.length === 0 ? (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="receipt-outline" size={26} color="#1ec873" />
+            </View>
+            <Text style={styles.emptyTitle}>No bills yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Once you scan a receipt, your totals and history will show up here.
             </Text>
+            <View style={styles.emptyStatsRow}>
+              <View style={styles.emptyStatCard}>
+                <Text style={styles.emptyStatValue}>$0</Text>
+                <Text style={styles.emptyStatLabel}>Total Spent</Text>
+              </View>
+              <View style={styles.emptyStatCard}>
+                <Text style={styles.emptyStatValue}>$0</Text>
+                <Text style={styles.emptyStatLabel}>Avg/Meal</Text>
+              </View>
+              <View style={styles.emptyStatCard}>
+                <Text style={styles.emptyStatValue}>0</Text>
+                <Text style={styles.emptyStatLabel}>Bills Split</Text>
+              </View>
+            </View>
           </View>
-        </View>
+        ) : (
+          <>
+            <View style={styles.statsRow}>
+              <StatCard label="Total Spent" value={`$${totalSpent.toFixed(0)}`} />
+              <StatCard label="Avg/Meal" value={`$${avgMeal.toFixed(0)}`} />
+              <StatCard label="Bills Split" value={`${receipts.length}`} />
+            </View>
 
-        <Text style={styles.sectionTitle}>All Bills</Text>
+            <View style={styles.insightCard}>
+              <View style={styles.insightIcon}>
+                <Ionicons name="trending-up" size={22} color="#7b3aed" />
+              </View>
+              <View>
+                <Text style={styles.insightTitle}>Monthly Insights</Text>
+                <Text style={styles.insightSubtitle}>
+                  You spent ${totalSpent.toFixed(0)} across {receipts.length} bills
+                </Text>
+              </View>
+            </View>
 
-        {grouped.map((group) => (
-          <View key={group.heading} style={{ marginBottom: 12 }}>
-            <Text style={styles.groupHeading}>{group.heading}</Text>
-            {group.bills.map((bill) => (
-              <View key={bill.id} style={styles.billCard}>
-                <View style={styles.billLeft}>
-                  <View style={styles.billIcon}>
-                    <Ionicons name="receipt-outline" size={20} color="#8ba0ae" />
-                  </View>
-                  <View>
-                    <Text style={styles.billTitle}>{bill.restaurantName}</Text>
-                    <View style={styles.billMeta}>
-                      <Ionicons name="people-outline" size={14} color="#7a8a9b" />
-                      <Text style={styles.billMetaText}>Split</Text>
-                      <View style={styles.dot} />
-                      <Text style={styles.billMetaText}>
-                        {new Date(bill.date).toLocaleDateString()}
-                      </Text>
+            <Text style={styles.sectionTitle}>All Bills</Text>
+
+            {grouped.map((group) => (
+              <View key={group.heading} style={{ marginBottom: 12 }}>
+                <Text style={styles.groupHeading}>{group.heading}</Text>
+                {group.bills.map((bill) => (
+                  <View key={bill.id} style={styles.billCard}>
+                    <View style={styles.billLeft}>
+                      <View style={styles.billIcon}>
+                        <Ionicons name="receipt-outline" size={20} color="#8ba0ae" />
+                      </View>
+                      <View>
+                        <Text style={styles.billTitle}>{bill.restaurantName}</Text>
+                        <View style={styles.billMeta}>
+                          <Ionicons name="people-outline" size={14} color="#7a8a9b" />
+                          <Text style={styles.billMetaText}>Split</Text>
+                          <View style={styles.dot} />
+                          <Text style={styles.billMetaText}>
+                            {new Date(bill.date).toLocaleDateString()}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.billRight}>
+                      <Text style={styles.billAmount}>${bill.total.toFixed(2)}</Text>
+                      <View style={[styles.statusPill, { backgroundColor: '#d7f6e8' }]}>
+                        <Text style={[styles.statusText, { color: '#1fbf74' }]}>settled</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-                <View style={styles.billRight}>
-                  <Text style={styles.billAmount}>${bill.total.toFixed(2)}</Text>
-                  <View style={[styles.statusPill, { backgroundColor: '#d7f6e8' }]}>
-                    <Text style={[styles.statusText, { color: '#1fbf74' }]}>settled</Text>
-                  </View>
-                </View>
+                ))}
               </View>
             ))}
-          </View>
-        ))}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -128,6 +156,61 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 32,
+  },
+  emptyState: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#e6ecf2',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  emptyIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#e8fff2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1c2433',
+  },
+  emptySubtitle: {
+    marginTop: 6,
+    textAlign: 'center',
+    color: '#6b7b8e',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  emptyStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  emptyStatCard: {
+    flex: 1,
+    backgroundColor: '#f4fbf7',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#dff2e7',
+    alignItems: 'center',
+  },
+  emptyStatValue: {
+    color: '#1ec873',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  emptyStatLabel: {
+    color: '#7a8a9b',
+    marginTop: 6,
+    fontSize: 12,
   },
   statsRow: {
     flexDirection: 'row',

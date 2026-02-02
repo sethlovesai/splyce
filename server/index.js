@@ -34,25 +34,47 @@ app.post('/api/parse-receipt', upload.single('file'), async (req, res) => {
     const prompt =
       'You extract structured data from restaurant receipts. First, decide if the image is actually a receipt and if the receipt is visible. Return ONLY JSON matching this shape: { "isReceipt": boolean, "restaurantName": string|null, "date": string|null, "items": [ { "name": string, "price": number, "quantity": number } ], "totals": { "subtotal": number, "tax": number, "tip": number, "serviceCharge"?: number, "total": number } }. Use quantity 1 if not present. Round prices to two decimals. Never include markdown or code fences.';
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      max_tokens: 500,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: prompt },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Read the receipt image and return structured JSON.' },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/jpeg;base64,${base64}` },
-            },
-          ],
-        },
-      ],
-    });
+    const controller = new AbortController();
+    const timeoutMs = 10_000;
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    let completion;
+    try {
+      completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 500,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: prompt },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Read the receipt image and return structured JSON.' },
+              {
+                type: 'image_url',
+                image_url: { url: `data:image/jpeg;base64,${base64}` },
+              },
+            ],
+          },
+        ],
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (timedOut) {
+        return res
+          .status(408)
+          .json({ error: 'Server is waking up, please try again.' });
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const content = completion.choices?.[0]?.message?.content;
     if (!content) {

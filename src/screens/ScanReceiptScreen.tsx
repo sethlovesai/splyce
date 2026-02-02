@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+} from 'react-native';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp, RouteProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
@@ -80,12 +90,46 @@ const ScanReceiptScreen: React.FC = () => {
   //   }
   // };
 
-  const pickFromLibrary = async () => {
-    navigation.navigate('AddParticipants', {
-      items: [{ id: '1', name: 'Test Item', price: 500, quantity: 1 }], 
-      restaurantName: 'Test', 
-      totals: { subtotal: 500, tax: 0, tip: 0 }, 
+  const handleUploadReceipt = async () => {
+    const existingPerms = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    let finalStatus = existingPerms.status;
+
+    if (finalStatus !== 'granted' && existingPerms.canAskAgain) {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== 'granted') {
+      Alert.alert(
+        'Permission needed',
+        'Please enable photo library access in your device settings to upload a receipt.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Settings',
+            onPress: () => {
+              if (Platform.OS === 'ios') {
+                Linking.openURL('app-settings:');
+              } else {
+                Linking.openSettings();
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.8,
     });
+
+    if (!result.canceled && result.assets?.length) {
+      setImageUri(result.assets[0].uri);
+      setImageBase64(result.assets[0].base64 ?? null);
+    }
   };
 
   const handleUsePhoto = async () => {
@@ -241,7 +285,7 @@ const ScanReceiptScreen: React.FC = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondaryButton}
-                onPress={pickFromLibrary}
+                onPress={handleUploadReceipt}
                 activeOpacity={0.9}
               >
                 <Text style={styles.secondaryButtonText}>Upload from Library</Text>
