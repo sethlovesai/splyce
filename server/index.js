@@ -63,8 +63,7 @@ app.post('/api/parse-receipt', upload.single('file'), async (req, res) => {
             ],
           },
         ],
-        signal: controller.signal,
-      });
+      }, { signal: controller.signal });
     } catch (err) {
       if (timedOut) {
         return res

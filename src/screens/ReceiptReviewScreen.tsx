@@ -12,6 +12,7 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
@@ -230,6 +231,13 @@ export default function ReceiptReviewScreen() {
     closeEditModal();
   };
 
+  const handleDeleteItem = (id: string) => {
+    setEditableItems((prev) => prev.filter((item) => item.id !== id));
+    if (editTarget?.type === 'item' && editTarget.id === id) {
+      closeEditModal();
+    }
+  };
+
   const closeAdjustModal = () => {
     setAdjustMode(null);
     setShowChargeKindMenu(false);
@@ -298,6 +306,14 @@ export default function ReceiptReviewScreen() {
                   <Text style={styles.prefix}>$</Text>
                   <Text style={styles.priceDisplay}>{item.priceStr}</Text>
                 </View>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteItem(item.id)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#c0392b" />
+                </TouchableOpacity>
               </TouchableOpacity>
             ))}
           </View>
@@ -626,6 +642,15 @@ export default function ReceiptReviewScreen() {
                   <TouchableOpacity style={styles.modalActionButton} onPress={handleSaveEdit} activeOpacity={0.9}>
                     <Text style={styles.modalActionText}>Save changes</Text>
                   </TouchableOpacity>
+                  {editTarget?.type === 'item' ? (
+                    <TouchableOpacity
+                      style={styles.modalDeleteButton}
+                      onPress={() => handleDeleteItem(editTarget.id)}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.modalDeleteText}>Delete item</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
 
                 <TouchableOpacity style={styles.modalCloseButton} onPress={closeEditModal}>
@@ -923,6 +948,22 @@ const styles = StyleSheet.create({
   },
   modalCloseText: {
     color: '#ffffff',
+    fontWeight: '800',
+  },
+  deleteButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingLeft: 4,
+  },
+  modalDeleteButton: {
+    marginTop: 10,
+    backgroundColor: '#fdecea',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalDeleteText: {
+    color: '#c0392b',
     fontWeight: '800',
   },
 });
