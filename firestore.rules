@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// Splyce live-splitting security rules (Stage 1 MVP).
+//
+// Model:
+//   - The HOST authenticates anonymously (see src/services/firebase.ts
+//     ensureHostId). Their auth uid is stored as the session's hostId.
+//   - GUESTS are unauthenticated. They can read a session by id and add/update
+//     their claims, but nothing else.
+//
+// This is intentionally simple, but not wide open: guest writes may only touch
+// the `items` and `guests` fields, and may not reopen/hijack the session or
+// tamper with host/receipt metadata.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /sessions/{sessionId} {
+
+      // The host owns the session when their uid matches the stored hostId.
+      function isHost() {
+        return request.auth != null && request.auth.uid == resource.data.hostId;
+      }
+
+      // Fields a non-host (guest) write is allowed to modify.
+      function onlyClaimFieldsChanged() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['items', 'guests']);
+      }
+
+      // Anyone who knows the sessionId can read it (guests aren't authed).
+      allow read: if true;
+
+      // Create: must be an authenticated host creating an OPEN session whose
+      // hostId is their own uid. Prevents spoofing someone else as host.
+      allow create: if request.auth != null
+                    && request.resource.data.hostId == request.auth.uid
+                    && request.resource.data.status == 'open';
+
+      // Update:
+      //  - The host may update anything on their own session (incl. status).
+      //  - A guest may update ONLY items/guests, and only while the session is
+      //    open and stays open (can't flip status, change host, receipt, etc.).
+      allow update: if isHost()
+                    || (
+                         resource.data.status == 'open'
+                         && request.resource.data.status == 'open'
+                         && onlyClaimFieldsChanged()
+                       );
+
+      // Only the host may delete the session.
+      allow delete: if isHost();
+    }
+  }
+}

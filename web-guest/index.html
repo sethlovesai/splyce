@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Splyce — Claim your items</title>
+  <style>
+    :root { --green:#1ec873; --ink:#0f1b2d; --muted:#6b7b8e; --line:#e6ecf2; --bg:#f5f7fa; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+           background:var(--bg); color:var(--ink); }
+    .wrap { max-width:520px; margin:0 auto; padding:16px; }
+    header { background:var(--green); color:#fff; border-radius:16px; padding:18px; margin-bottom:16px; }
+    header h1 { margin:0; font-size:20px; }
+    header p { margin:6px 0 0; color:#e8ffef; font-size:14px; }
+    .badge { display:inline-block; margin-top:10px; padding:4px 10px; border-radius:999px;
+             font-size:12px; font-weight:700; background:rgba(255,255,255,.2); }
+    .badge.closed { background:#ef4444; }
+    .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+    .item-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+    .item-name { font-weight:600; font-size:16px; }
+    .item-price { font-weight:700; }
+    .claimants { margin-top:8px; font-size:13px; color:var(--muted); }
+    .claimants b { color:var(--ink); }
+    .mine { color:var(--green); font-weight:700; }
+    .btns { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+    button { font:inherit; border:none; border-radius:999px; padding:10px 14px; font-weight:700; cursor:pointer; }
+    .btn-full { background:var(--green); color:#fff; }
+    .btn-half { background:#efedfd; color:#5b4ddb; border:1px solid #c6c0f5; }
+    .btn-remove { background:#fff; color:#ef4444; border:1px solid #f3c6c6; }
+    .btn-full.active { outline:3px solid #b9f0d3; }
+    .btn-half.active { outline:3px solid #d9d4fb; }
+    .join { background:#fff; border-radius:12px; padding:18px; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+    .join input { width:100%; padding:12px; border:1px solid var(--line); border-radius:10px; font:inherit; margin:10px 0; }
+    .join button { width:100%; background:var(--green); color:#fff; }
+    .total { margin-top:16px; padding:14px; background:#fff; border-radius:12px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+    .total .big { font-size:26px; font-weight:800; color:var(--green); }
+    .muted { color:var(--muted); font-size:13px; }
+    .state { text-align:center; padding:40px 16px; color:var(--muted); }
+    .err { color:#ef4444; }
+    .hint { font-size:12px; color:var(--muted); margin-top:4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="app">
+    <div class="state">Loading session…</div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js';
+    import {
+      getFirestore, doc, onSnapshot, runTransaction, Timestamp,
+    } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
+
+    // Public Firebase web config (client identifiers — access is governed by
+    // Firestore security rules, not by hiding these). Keep in sync with the app.
+    const firebaseConfig = {
+      apiKey: "AIzaSyD_C0pSLIFjOiVD4Zzi_JLj-8cpQo06UzA",
+      authDomain: "splyce-6739e.firebaseapp.com",
+      projectId: "splyce-6739e",
+      storageBucket: "splyce-6739e.firebasestorage.app",
+      messagingSenderId: "1052895504307",
+      appId: "1:1052895504307:web:7d226593d76009f81a0dc6",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const appEl = document.getElementById('app');
+
+    // --- session id from /join/{id} or ?s={id} ---
+    function getSessionId() {
+      const url = new URL(location.href);
+      const q = url.searchParams.get('s') || url.searchParams.get('session');
+      if (q) return q;
+      const parts = url.pathname.split('/').filter(Boolean);
+      const i = parts.indexOf('join');
+      if (i >= 0 && parts[i + 1]) return parts[i + 1];
+      return parts.length ? parts[parts.length - 1] : null;
+    }
+    const sessionId = getSessionId();
+
+    // --- stable guest identity (per browser) ---
+    let guestId = localStorage.getItem('splyce_guestId');
+    if (!guestId) {
+      guestId = 'g-' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('splyce_guestId', guestId);
+    }
+    let guestName = localStorage.getItem('splyce_guestName') || '';
+
+    if (!sessionId) {
+      appEl.innerHTML = '<div class="state err">No session in the link. Ask the host to re-share.</div>';
+      throw new Error('missing sessionId');
+    }
+
+    const ref = doc(db, 'sessions', sessionId);
+    let latest = null;
+
+    function shareFor(price, portion, totalPortions) {
+      return totalPortions <= 0 ? 0 : price * (portion / totalPortions);
+    }
+
+    // Mirror of addGuestClaim() from the app, run unauthenticated per the rules.
+    async function claim(itemId, portion) {
+      if (!guestName) return;
+      try {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists()) throw new Error('Session not found');
+          const s = snap.data();
+          if (s.status !== 'open') throw new Error('Session is closed');
+          const items = s.items.map((item) => {
+            if (item.itemId !== itemId) return item;
+            const others = item.claims.filter((c) => c.guestId !== guestId);
+            const claims = portion > 0 ? [...others, { guestId, guestName, portion }] : others;
+            return { ...item, claims };
+          });
+          const guests = s.guests.some((g) => g.guestId === guestId)
+            ? s.guests
+            : [...s.guests, { guestId, name: guestName, joinedAt: Timestamp.now() }];
+          tx.update(ref, { items, guests });
+        });
+      } catch (e) {
+        alert(e.message || 'Could not save your claim.');
+      }
+    }
+    window.__claim = claim; // used by inline handlers
+
+    // Register the guest in the session as soon as they enter their name, so the
+    // host sees "joined" immediately — before any item is claimed. Adds only to
+    // the `guests` array (allowed by the security rules for open sessions).
+    async function registerGuest() {
+      try {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists()) throw new Error('Session not found');
+          const s = snap.data();
+          if (s.status !== 'open') return; // nothing to do on a closed session
+          if (s.guests.some((g) => g.guestId === guestId)) return; // already joined
+          const guests = [...s.guests, { guestId, name: guestName, joinedAt: Timestamp.now() }];
+          tx.update(ref, { guests });
+        });
+      } catch (e) {
+        console.warn('registerGuest failed:', e.message);
+      }
+    }
+
+    function myPortion(item) {
+      const mine = item.claims.find((c) => c.guestId === guestId);
+      return mine ? mine.portion : 0;
+    }
+
+    function render(session) {
+      latest = session;
+      if (!session) {
+        appEl.innerHTML = '<div class="state err">This session doesn’t exist (or was removed).</div>';
+        return;
+      }
+
+      // Name gate: ask who they are before showing claim controls.
+      if (!guestName) {
+        appEl.innerHTML = `
+          <header><h1>${esc(session.restaurantName || 'Split the bill')}</h1>
+            <p>Enter your name to start claiming your items.</p></header>
+          <div class="join">
+            <label class="muted">Your name</label>
+            <input id="nameInput" placeholder="e.g. Alex" autofocus />
+            <button id="joinBtn">Join & claim items</button>
+          </div>`;
+        const input = document.getElementById('nameInput');
+        const commit = () => {
+          const v = input.value.trim();
+          if (!v) return;
+          guestName = v;
+          localStorage.setItem('splyce_guestName', v);
+          registerGuest(); // announce to the host right away
+          render(latest);
+        };
+        document.getElementById('joinBtn').onclick = commit;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
+        return;
+      }
+
+      const closed = session.status === 'closed';
+      let myTotal = 0;
+
+      const itemsHtml = session.items.map((item) => {
+        const totalPortions = item.claims.reduce((s, c) => s + c.portion, 0);
+        const mine = myPortion(item);
+        if (mine > 0) myTotal += shareFor(item.price, mine, totalPortions);
+
+        const claimants = item.claims.length
+          ? item.claims.map((c) => {
+              const label = c.portion === 1 ? '' : c.portion === 0.5 ? 'half · ' : `${c.portion}× · `;
+              const who = c.guestId === guestId ? `<span class="mine">${esc(c.guestName)} (you)</span>` : `<b>${esc(c.guestName)}</b>`;
+              return `${label}${who}`;
+            }).join(', ')
+          : '<span class="muted">Unclaimed</span>';
+
+        const controls = closed ? '' : `
+          <div class="btns">
+            <button class="btn-full ${mine === 1 ? 'active' : ''}" onclick="__claim('${item.itemId}',1)">I'll pay full</button>
+            <button class="btn-half ${mine === 0.5 ? 'active' : ''}" onclick="__claim('${item.itemId}',0.5)">Go half</button>
+            ${mine > 0 ? `<button class="btn-remove" onclick="__claim('${item.itemId}',0)">Remove</button>` : ''}
+          </div>`;
+
+        return `
+          <div class="card">
+            <div class="item-top">
+              <div class="item-name">${esc(item.name)}</div>
+              <div class="item-price">$${Number(item.price).toFixed(2)}</div>
+            </div>
+            <div class="claimants">${claimants}</div>
+            ${controls}
+          </div>`;
+      }).join('');
+
+      appEl.innerHTML = `
+        <header>
+          <h1>${esc(session.restaurantName || 'Split the bill')}</h1>
+          <p>Tap the items you had. Splitting with friends? Pick “Go half”.</p>
+          <span class="badge ${closed ? 'closed' : ''}">${closed ? 'Session closed' : 'Live'}</span>
+        </header>
+        ${closed ? '<div class="card muted">The host closed this session. Your claims are locked in below.</div>' : ''}
+        ${itemsHtml}
+        <div class="total">
+          <div class="muted">Your share so far</div>
+          <div class="big">$${myTotal.toFixed(2)}</div>
+          <div class="hint">Updates live as you and others claim. Tax/tip added by the host.</div>
+        </div>`;
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    onSnapshot(ref,
+      (snap) => render(snap.exists() ? snap.data() : null),
+      (err) => {
+        appEl.innerHTML = `<div class="state err">Couldn’t load the session.<br><span class="muted">${esc(err.message)}</span></div>`;
+      });
+  </script>
+</body>
+</html>

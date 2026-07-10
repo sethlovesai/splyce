@@ -63,6 +63,7 @@ export type RootStackParamList = {
     participants: string[];
     restaurantName: string;
     totals: Totals;
+    sessionId?: string; // present when a live session was started on the participants screen
   };
   Summary: {
     summary: SummaryEntry[];

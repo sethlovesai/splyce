@@ -16,6 +16,14 @@ import {
   ReceiptItem,
 } from '../types/navigation';
 import { GradientHeader } from '../components/GradientHeader';
+import { subscribeToSession, closeSession, addGuestClaim } from '../services/liveSession';
+import { LiveSession } from '../types/session';
+import {
+  flattenLiveClaims,
+  portionLabel,
+  buildHybridSummary,
+  ManualItem,
+} from '../services/liveClaims';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'SelectItems'>;
 type RouteProps = RouteProp<RootStackParamList, 'SelectItems'>;
@@ -27,9 +35,10 @@ const PARTICIPANT_COLORS = ['#1ec873', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6
 const SelectItemsScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { items: rawItems, participants, restaurantName, totals } = route.params;
+  const { items: rawItems, participants, restaurantName, totals, sessionId } = route.params;
 
-  // Expand quantity > 1 into individual rows with unit pricing
+  // Expand quantity > 1 into individual rows with unit pricing. sourceId keeps a
+  // link back to the original receipt item (used to match against live claims).
   const expandedItems = React.useMemo(() => {
     return rawItems.flatMap((item) => {
       const qty = Math.max(1, item.quantity || 1);
@@ -37,6 +46,7 @@ const SelectItemsScreen: React.FC = () => {
       return Array.from({ length: qty }).map((_, idx) => ({
         ...item,
         id: `${item.id}-${idx + 1}`,
+        sourceId: item.id,
         quantity: 1,
         price: unitPrice,
       }));
@@ -53,6 +63,79 @@ const SelectItemsScreen: React.FC = () => {
 
   const [activeParticipant, setActiveParticipant] = React.useState<string>(participants[0]);
   const [selectedByItem, setSelectedByItem] = React.useState<SelectionMap>(buildSelectionMap);
+
+  // --- Live session (host side): session was created on the participants screen
+  // and passed in via route params. Subscribe to watch guest claims in real time.
+  const [liveSession, setLiveSession] = React.useState<LiveSession | null>(null);
+
+  React.useEffect(() => {
+    if (!sessionId) return;
+    return subscribeToSession(sessionId, setLiveSession, (err) =>
+      console.warn('Live session listener error:', err.message),
+    );
+  }, [sessionId]);
+
+  const claimLines = React.useMemo(() => flattenLiveClaims(liveSession), [liveSession]);
+
+  // Original receipt items that a live guest has already claimed — these are
+  // locked from manual assignment (live claim wins).
+  const claimedSourceIds = React.useMemo(() => {
+    const set = new Set<string>();
+    liveSession?.items.forEach((item) => {
+      if (item.claims.length > 0) set.add(item.itemId);
+    });
+    return set;
+  }, [liveSession]);
+
+  const claimantFor = React.useCallback(
+    (sourceId: string) => {
+      const item = liveSession?.items.find((i) => i.itemId === sourceId);
+      if (!item || item.claims.length === 0) return null;
+      return item.claims.map((c) => c.guestName).join(', ');
+    },
+    [liveSession],
+  );
+
+  const handleCloseSession = async () => {
+    if (!sessionId) return;
+    try {
+      await closeSession(sessionId);
+    } catch (err) {
+      console.warn('Failed to close session:', err);
+    }
+    // Merge live claims + manual assignments (live wins on any claimed item).
+    const manualItems: ManualItem[] = expandedItems.map((i) => ({
+      id: i.id,
+      sourceId: i.sourceId,
+      name: i.name,
+      price: i.price,
+    }));
+    const selections: Record<string, string[]> = {};
+    Object.entries(selectedByItem).forEach(([id, set]) => {
+      selections[id] = Array.from(set);
+    });
+    const summary = buildHybridSummary(liveSession, manualItems, selections, totals);
+    navigation.navigate('Summary', { summary, restaurantName, totals });
+  };
+
+  // Dev-only: fake a guest claim so the live listener can be verified before the
+  // guest web page (Stage 3) exists.
+  const handleSimulateGuestClaim = async () => {
+    if (!sessionId || !liveSession || liveSession.items.length === 0) return;
+    const item = liveSession.items[Math.floor(Math.random() * liveSession.items.length)];
+    const fakeGuests: [string, string][] = [
+      ['g-alice', 'Alice'],
+      ['g-bob', 'Bob'],
+      ['g-cara', 'Cara'],
+    ];
+    const [guestId, guestName] = fakeGuests[Math.floor(Math.random() * fakeGuests.length)];
+    const portion = Math.random() < 0.5 ? 0.5 : 1;
+    try {
+      await addGuestClaim(sessionId, item.itemId, guestId, guestName, portion);
+    } catch (err) {
+      console.warn('Simulated claim failed:', err);
+    }
+  };
 
   // Reset selection map if items change (e.g., new scan)
   React.useEffect(() => {
@@ -151,6 +234,40 @@ const SelectItemsScreen: React.FC = () => {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        {sessionId ? (
+          <View style={styles.livePanel}>
+            <View style={styles.liveHeaderRow}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveTitle}>Live session active</Text>
+            </View>
+            <Text style={styles.liveSub}>
+              {liveSession?.guests.length ?? 0} joined • claimed items are locked below; assign the rest manually
+            </Text>
+            {claimLines.length === 0 ? (
+              <Text style={styles.liveEmpty}>No claims yet — waiting for guests…</Text>
+            ) : (
+              <View style={styles.liveClaimList}>
+                {claimLines.map((line) => (
+                  <Text key={line.key} style={styles.liveClaimLine}>
+                    <Text style={styles.liveClaimName}>{line.guestName}</Text> claimed:{' '}
+                    {portionLabel(line.portion)}
+                    {line.itemName} (${line.amount.toFixed(2)})
+                  </Text>
+                ))}
+              </View>
+            )}
+            {__DEV__ ? (
+              <TouchableOpacity
+                style={styles.devButton}
+                onPress={handleSimulateGuestClaim}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.devButtonText}>+ Simulate guest claim (dev)</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -176,6 +293,9 @@ const SelectItemsScreen: React.FC = () => {
 
         <View style={styles.list}>
           {expandedItems.map((item) => {
+            // Live claim wins: if a guest claimed this item, lock it from manual assignment.
+            const claimedBy = sessionId ? claimantFor(item.sourceId) : null;
+            const locked = claimedBy != null;
             const isSelected = selectedByItem[item.id]?.has(activeParticipant);
             const selectedUsers = selectedByItem[item.id]
               ? Array.from(selectedByItem[item.id])
@@ -183,19 +303,27 @@ const SelectItemsScreen: React.FC = () => {
             return (
               <Pressable
                 key={item.id}
-                style={styles.itemCard}
-                onPress={() => toggleSelection(item.id)}
+                style={[styles.itemCard, locked && styles.itemCardLocked]}
+                onPress={() => {
+                  if (locked || !activeParticipant) return;
+                  toggleSelection(item.id);
+                }}
               >
                 <View style={styles.itemInfo}>
-                  <View style={styles.indicatorOuter}>
-                    <View style={[styles.indicatorInner, isSelected && styles.indicatorSelected]} />
-                  </View>
+                  {locked ? (
+                    <View style={styles.lockBadge}>
+                      <Text style={styles.lockBadgeText}>✓</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.indicatorOuter}>
+                      <View style={[styles.indicatorInner, isSelected && styles.indicatorSelected]} />
+                    </View>
+                  )}
                   <View style={styles.itemTextContainer}>
                     <Text style={styles.itemName}>{item.name}</Text>
-                    {/* <Text style={styles.itemMeta}>
-                      Qty {item.quantity} • ${item.price.toFixed(2)}
-                    </Text> */}
-                    {selectedUsers.length > 0 ? (
+                    {locked ? (
+                      <Text style={styles.claimedMeta}>Claimed live by {claimedBy}</Text>
+                    ) : selectedUsers.length > 0 ? (
                       <View style={styles.avatarRow}>
                         {selectedUsers.map((user) => {
                           const idx = participants.indexOf(user);
@@ -218,20 +346,32 @@ const SelectItemsScreen: React.FC = () => {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerHint}>
-          Items selected {itemsSelectedCount}/{totalItems}
-        </Text>
-        <TouchableOpacity
-          style={[
-            styles.calculateButton,
-            itemsSelectedCount === 0 && styles.calculateButtonDisabled,
-          ]}
-          disabled={itemsSelectedCount === 0}
-          onPress={handleDone}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.calculateText}>Done</Text>
-        </TouchableOpacity>
+        {sessionId ? (
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={handleCloseSession}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.calculateText}>Close Session &amp; Split</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <Text style={styles.footerHint}>
+              Items selected {itemsSelectedCount}/{totalItems}
+            </Text>
+            <TouchableOpacity
+              style={[
+                styles.calculateButton,
+                itemsSelectedCount === 0 && styles.calculateButtonDisabled,
+              ]}
+              disabled={itemsSelectedCount === 0}
+              onPress={handleDone}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.calculateText}>Done</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
     </View>
   );
@@ -282,6 +422,30 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
+  },
+  itemCardLocked: {
+    backgroundColor: '#f3f1fd',
+    borderWidth: 1,
+    borderColor: '#e0dcfb',
+  },
+  lockBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#5b4ddb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockBadgeText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  claimedMeta: {
+    color: '#5b4ddb',
+    fontWeight: '600',
+    marginTop: 2,
+    fontSize: 13,
   },
   itemInfo: {
     flexDirection: 'row',
@@ -368,6 +532,72 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '800',
     fontSize: 16,
+  },
+  livePanel: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e0dcfb',
+  },
+  liveHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ef4444',
+  },
+  liveTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f1b2d',
+  },
+  liveSub: {
+    color: '#6b7b8e',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  liveClaimList: {
+    marginTop: 10,
+    gap: 6,
+  },
+  liveClaimLine: {
+    color: '#0f1b2d',
+    fontSize: 14,
+  },
+  liveClaimName: {
+    fontWeight: '700',
+  },
+  liveEmpty: {
+    marginTop: 10,
+    color: '#9aa8b6',
+    fontStyle: 'italic',
+  },
+  devButton: {
+    marginTop: 12,
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#c6c0f5',
+  },
+  devButtonText: {
+    color: '#5b4ddb',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  closeButton: {
+    alignSelf: 'stretch',
+    backgroundColor: '#ef4444',
+    paddingVertical: 16,
+    borderRadius: 999,
+    alignItems: 'center',
   },
 });
 

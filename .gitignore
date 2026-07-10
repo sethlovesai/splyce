@@ -46,3 +46,6 @@ app-example
 .env.*
 # server
 server/.env
+
+# Firebase hosting deploy cache
+.firebase/

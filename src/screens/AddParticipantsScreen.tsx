@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Share,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,6 +15,12 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 
 import { RootStackParamList } from '../types/navigation';
 import { GradientHeader } from '../components/GradientHeader';
+import { ensureHostId } from '../services/firebase';
+import { createSession, subscribeToSession, addGuest } from '../services/liveSession';
+import { LiveSession } from '../types/session';
+
+// Guest join page, served by Firebase Hosting (see web-guest/ + firebase.json).
+const LIVE_LINK_BASE = 'https://splyce-6739e.web.app/join';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddParticipants'>;
 type RouteProps = RouteProp<RootStackParamList, 'AddParticipants'>;
@@ -24,6 +31,52 @@ export default function AddParticipantsScreen() {
   const { items, restaurantName, totals } = route.params;
 
   const [names, setNames] = useState<string[]>(['You', 'Person 2', 'Person 3']);
+
+  // --- Live session (host gathers guests here, before item selection) ---
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
+  const [creatingSession, setCreatingSession] = useState(false);
+
+  React.useEffect(() => {
+    if (!sessionId) return;
+    return subscribeToSession(sessionId, setLiveSession, (err) =>
+      console.warn('Live session listener error:', err.message),
+    );
+  }, [sessionId]);
+
+  const guests = liveSession?.guests ?? [];
+
+  const handleSendLiveLink = async () => {
+    if (creatingSession || sessionId) return;
+    setCreatingSession(true);
+    try {
+      const hostId = await ensureHostId();
+      const id = await createSession({ restaurantName, items }, hostId);
+      setSessionId(id);
+      const url = `${LIVE_LINK_BASE}/${id}`;
+      await Share.share({
+        message: `Join my Splyce bill for ${restaurantName} and claim your items: ${url}`,
+        url,
+        title: `Splyce live split — ${restaurantName}`,
+      });
+    } catch (err) {
+      console.warn('Failed to start live session:', err);
+    } finally {
+      setCreatingSession(false);
+    }
+  };
+
+  // Dev-only: fake a guest joining, to test the live roster without a 2nd device.
+  const handleSimulateJoin = async () => {
+    if (!sessionId) return;
+    const pool = ['Alex', 'Bailey', 'Cameron', 'Devin', 'Emerson'];
+    const name = pool[Math.floor(Math.random() * pool.length)];
+    try {
+      await addGuest(sessionId, `g-${name.toLowerCase()}`, name);
+    } catch (err) {
+      console.warn('Simulated join failed:', err);
+    }
+  };
 
   const updateName = (index: number, value: string) => {
     setNames((prev) => prev.map((name, idx) => (idx === index ? value : name)));
@@ -39,13 +92,15 @@ export default function AddParticipantsScreen() {
 
   const handleContinue = () => {
     const participants = names.map((name) => name.trim()).filter(Boolean);
-    if (participants.length === 0) return;
+    // Live guests claim their own items, so a session alone is enough to proceed.
+    if (participants.length === 0 && !sessionId) return;
 
     navigation.navigate('SelectItems', {
       items,
       participants,
       restaurantName,
       totals,
+      sessionId: sessionId ?? undefined,
     });
   };
 
@@ -85,7 +140,51 @@ export default function AddParticipantsScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionLabel}>Enter names</Text>
+        <View style={styles.liveCard}>
+          {sessionId ? (
+            <>
+              <View style={styles.liveHeaderRow}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveTitle}>Live link active</Text>
+              </View>
+              <Text style={styles.liveSub}>
+                {guests.length === 0
+                  ? 'Waiting for people to join…'
+                  : `${guests.length} joined via link`}
+              </Text>
+              {guests.length > 0 ? (
+                <View style={styles.guestChips}>
+                  {guests.map((g) => (
+                    <View key={g.guestId} style={styles.guestChip}>
+                      <Text style={styles.guestChipText}>{g.name}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              {__DEV__ ? (
+                <TouchableOpacity style={styles.devButton} onPress={handleSimulateJoin} activeOpacity={0.8}>
+                  <Text style={styles.devButtonText}>+ Simulate join (dev)</Text>
+                </TouchableOpacity>
+              ) : null}
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.liveLinkButton}
+              onPress={handleSendLiveLink}
+              disabled={creatingSession}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="share-social-outline" size={18} color="#5b4ddb" />
+              <Text style={styles.liveLinkText}>
+                {creatingSession ? 'Starting…' : 'Send Live Link'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <Text style={styles.sectionLabel}>
+          {sessionId ? 'Add anyone not joining the link' : 'Enter names'}
+        </Text>
 
         <View style={styles.inputs}>
           {names.map((name, idx) => (
@@ -189,6 +288,82 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: '#1c2433',
+  },
+  liveCard: {
+    backgroundColor: '#ffffff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e0dcfb',
+  },
+  liveHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ef4444',
+  },
+  liveTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1c2433',
+  },
+  liveSub: {
+    color: '#6b7b8e',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  guestChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  guestChip: {
+    backgroundColor: '#efedfd',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  guestChipText: {
+    color: '#5b4ddb',
+    fontWeight: '700',
+  },
+  liveLinkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#5b4ddb',
+    backgroundColor: '#efedfd',
+  },
+  liveLinkText: {
+    color: '#5b4ddb',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  devButton: {
+    marginTop: 12,
+    borderRadius: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#c6c0f5',
+  },
+  devButtonText: {
+    color: '#5b4ddb',
+    fontWeight: '700',
+    fontSize: 13,
   },
   sectionLabel: {
     marginTop: 20,
