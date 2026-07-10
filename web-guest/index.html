@@ -79,17 +79,25 @@
     }
     const sessionId = getSessionId();
 
-    // --- stable guest identity (per browser) ---
-    let guestId = localStorage.getItem('splyce_guestId');
-    if (!guestId) {
-      guestId = 'g-' + Math.random().toString(36).slice(2, 10);
-      localStorage.setItem('splyce_guestId', guestId);
-    }
-    let guestName = localStorage.getItem('splyce_guestName') || '';
-
     if (!sessionId) {
       appEl.innerHTML = '<div class="state err">No session in the link. Ask the host to re-share.</div>';
       throw new Error('missing sessionId');
+    }
+
+    // --- guest identity, scoped to THIS session only ---
+    // Keyed by sessionId so a previous session's name never bleeds into a new
+    // one. Nothing is generated or persisted until the guest taps "Join Split".
+    const STORAGE_KEY = `splyce_guest_${sessionId}`;
+    let guestId = null;
+    let guestName = '';
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (saved && saved.guestId && saved.name) {
+        guestId = saved.guestId;
+        guestName = saved.name;
+      }
+    } catch (e) {
+      /* ignore malformed storage */
     }
 
     const ref = doc(db, 'sessions', sessionId);
@@ -125,24 +133,46 @@
     }
     window.__claim = claim; // used by inline handlers
 
-    // Register the guest in the session as soon as they enter their name, so the
-    // host sees "joined" immediately — before any item is claimed. Adds only to
-    // the `guests` array (allowed by the security rules for open sessions).
-    async function registerGuest() {
+    // Explicit join: only THIS action persists anything. It (1) confirms a
+    // guestId, (2) writes the guest into the session's guests array, and (3)
+    // saves { guestId, name } to the session-scoped localStorage key. Until it
+    // runs, the typed name lives only in the input field.
+    let joining = false; // re-entrancy guard: block double-taps while in flight
+    async function joinSplit(typedName) {
+      if (joining) return;
+      const name = (typedName || '').trim();
+      if (!name) return;
+      joining = true;
+      const btn = document.getElementById('joinBtn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Joining…'; }
+      // Generate the id once, up front, so any retry reuses the same identity
+      // and the guests-array dedupe below actually matches.
+      const id = guestId || 'g-' + Math.random().toString(36).slice(2, 10);
       try {
         await runTransaction(db, async (tx) => {
           const snap = await tx.get(ref);
           if (!snap.exists()) throw new Error('Session not found');
           const s = snap.data();
-          if (s.status !== 'open') return; // nothing to do on a closed session
-          if (s.guests.some((g) => g.guestId === guestId)) return; // already joined
-          const guests = [...s.guests, { guestId, name: guestName, joinedAt: Timestamp.now() }];
-          tx.update(ref, { guests });
+          if (s.status !== 'open') throw new Error('This session is closed.');
+          if (!s.guests.some((g) => g.guestId === id)) {
+            tx.update(ref, {
+              guests: [...s.guests, { guestId: id, name, joinedAt: Timestamp.now() }],
+            });
+          }
         });
       } catch (e) {
-        console.warn('registerGuest failed:', e.message);
+        joining = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Join Split'; }
+        alert(e.message || 'Could not join the split.');
+        return;
       }
+      guestId = id;
+      guestName = name;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ guestId: id, name }));
+      joining = false;
+      render(latest);
     }
+    window.__join = joinSplit;
 
     function myPortion(item) {
       const mine = item.claims.find((c) => c.guestId === guestId);
@@ -156,25 +186,19 @@
         return;
       }
 
-      // Name gate: ask who they are before showing claim controls.
-      if (!guestName) {
+      // Name gate: not joined until guestId exists. The typed name lives only in
+      // the input until "Join Split" is tapped — nothing is persisted before then.
+      if (!guestId) {
         appEl.innerHTML = `
           <header><h1>${esc(session.restaurantName || 'Split the bill')}</h1>
-            <p>Enter your name to start claiming your items.</p></header>
+            <p>Enter your name, then tap Join Split to start claiming.</p></header>
           <div class="join">
             <label class="muted">Your name</label>
             <input id="nameInput" placeholder="e.g. Alex" autofocus />
-            <button id="joinBtn">Join & claim items</button>
+            <button id="joinBtn">Join Split</button>
           </div>`;
         const input = document.getElementById('nameInput');
-        const commit = () => {
-          const v = input.value.trim();
-          if (!v) return;
-          guestName = v;
-          localStorage.setItem('splyce_guestName', v);
-          registerGuest(); // announce to the host right away
-          render(latest);
-        };
+        const commit = () => __join(input.value);
         document.getElementById('joinBtn').onclick = commit;
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
         return;
@@ -214,6 +238,20 @@
           </div>`;
       }).join('');
 
+      // When closed, prefer the host-written final total (includes tax).
+      const myResult = closed && session.results ? session.results[guestId] : null;
+      const totalHtml = myResult
+        ? `<div class="total">
+             <div class="muted">Your total (incl. tax)</div>
+             <div class="big">$${Number(myResult.total).toFixed(2)}</div>
+             <div class="hint">Items $${Number(myResult.subtotal).toFixed(2)} + tax $${Number(myResult.tax).toFixed(2)}</div>
+           </div>`
+        : `<div class="total">
+             <div class="muted">Your share so far</div>
+             <div class="big">$${myTotal.toFixed(2)}</div>
+             <div class="hint">${closed ? 'The host closed this session.' : 'Updates live as you and others claim. Tax/tip added by the host.'}</div>
+           </div>`;
+
       appEl.innerHTML = `
         <header>
           <h1>${esc(session.restaurantName || 'Split the bill')}</h1>
@@ -222,11 +260,7 @@
         </header>
         ${closed ? '<div class="card muted">The host closed this session. Your claims are locked in below.</div>' : ''}
         ${itemsHtml}
-        <div class="total">
-          <div class="muted">Your share so far</div>
-          <div class="big">$${myTotal.toFixed(2)}</div>
-          <div class="hint">Updates live as you and others claim. Tax/tip added by the host.</div>
-        </div>`;
+        ${totalHtml}`;
     }
 
     function esc(s) {

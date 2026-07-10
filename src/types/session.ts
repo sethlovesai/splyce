@@ -23,6 +23,14 @@ export type SessionGuest = {
 
 export type SessionStatus = 'open' | 'closed';
 
+/** Per-guest final amount owed, written on close so the web page can display it. */
+export type GuestTotal = {
+  name: string;
+  subtotal: number; // pre-tax
+  tax: number;
+  total: number;
+};
+
 /**
  * A live-splitting session document, stored in the `sessions` collection.
  * The Firestore document ID is the sessionId (so it isn't duplicated in the body).
@@ -37,6 +45,7 @@ export type LiveSession = {
   guests: SessionGuest[];
   createdAt: Timestamp;
   expiresAt: Timestamp;
+  results?: Record<string, GuestTotal>; // keyed by guestId; set when the host closes
 };
 
 /** The minimal receipt shape createSession needs from our existing data model. */

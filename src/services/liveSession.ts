@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 
 import { db } from './firebase';
-import { LiveSession, ReceiptInput, SessionItem } from '../types/session';
+import { LiveSession, ReceiptInput, SessionItem, GuestTotal } from '../types/session';
 
 const SESSIONS = 'sessions';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -136,8 +136,14 @@ export async function addGuest(
   });
 }
 
-/** Mark a session closed (host action). */
-export async function closeSession(sessionId: string): Promise<void> {
+/**
+ * Mark a session closed (host action). Optionally writes per-guest final totals
+ * so the guest web page can show each person what they owe.
+ */
+export async function closeSession(
+  sessionId: string,
+  results?: Record<string, GuestTotal>,
+): Promise<void> {
   const ref = doc(db, SESSIONS, sessionId);
-  await updateDoc(ref, { status: 'closed' });
+  await updateDoc(ref, { status: 'closed', ...(results ? { results } : {}) });
 }

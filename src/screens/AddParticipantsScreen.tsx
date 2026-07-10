@@ -18,6 +18,7 @@ import { GradientHeader } from '../components/GradientHeader';
 import { ensureHostId } from '../services/firebase';
 import { createSession, subscribeToSession, addGuest } from '../services/liveSession';
 import { LiveSession } from '../types/session';
+import { expandReceiptItems } from '../utils/receiptItems';
 
 // Guest join page, served by Firebase Hosting (see web-guest/ + firebase.json).
 const LIVE_LINK_BASE = 'https://splyce-6739e.web.app/join';
@@ -51,7 +52,12 @@ export default function AddParticipantsScreen() {
     setCreatingSession(true);
     try {
       const hostId = await ensureHostId();
-      const id = await createSession({ restaurantName, items }, hostId);
+      // Expand quantities to unit-level so the guest page shows the same rows the
+      // host sees (each unit claimable separately).
+      const id = await createSession(
+        { restaurantName, items: expandReceiptItems(items) },
+        hostId,
+      );
       setSessionId(id);
       const url = `${LIVE_LINK_BASE}/${id}`;
       await Share.share({
@@ -106,6 +112,16 @@ export default function AddParticipantsScreen() {
 
   const canRemove = names.length > 1;
 
+  // Unified roster: manual names + guests joined via link are ONE list and ONE
+  // count. Guests already present as a manual name aren't shown twice.
+  const manualNames = names.map((n) => n.trim()).filter(Boolean);
+  const manualLower = new Set(manualNames.map((n) => n.toLowerCase()));
+  const linkGuests = guests.filter((g) => !manualLower.has(g.name.trim().toLowerCase()));
+  const uniqueCount = new Set([
+    ...manualNames.map((n) => n.toLowerCase()),
+    ...guests.map((g) => g.name.trim().toLowerCase()),
+  ]).size;
+
   return (
     <View style={styles.container}>
       <GradientHeader title="Who's Splitting?" subtitle="Add everyone joining this bill" />
@@ -122,7 +138,7 @@ export default function AddParticipantsScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Group Size</Text>
-              <Text style={styles.cardSubtitle}>{names.length} people</Text>
+              <Text style={styles.cardSubtitle}>{uniqueCount} people</Text>
             </View>
             <View style={styles.counter}>
               <TouchableOpacity
@@ -149,18 +165,9 @@ export default function AddParticipantsScreen() {
               </View>
               <Text style={styles.liveSub}>
                 {guests.length === 0
-                  ? 'Waiting for people to join…'
-                  : `${guests.length} joined via link`}
+                  ? 'Waiting for people to join… they’ll appear in the list below.'
+                  : `${guests.length} joined via link — shown in the list below.`}
               </Text>
-              {guests.length > 0 ? (
-                <View style={styles.guestChips}>
-                  {guests.map((g) => (
-                    <View key={g.guestId} style={styles.guestChip}>
-                      <Text style={styles.guestChipText}>{g.name}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
               {__DEV__ ? (
                 <TouchableOpacity style={styles.devButton} onPress={handleSimulateJoin} activeOpacity={0.8}>
                   <Text style={styles.devButtonText}>+ Simulate join (dev)</Text>
@@ -205,6 +212,18 @@ export default function AddParticipantsScreen() {
               </TouchableOpacity>
             ) : null}
           </View>
+          ))}
+
+          {linkGuests.map((g) => (
+            <View key={g.guestId} style={[styles.inputRow, styles.guestRow]}>
+              <View style={[styles.avatar, styles.guestAvatar]}>
+                <Ionicons name="link-outline" size={16} color="#5b4ddb" />
+              </View>
+              <Text style={[styles.input, styles.guestName]}>{g.name}</Text>
+              <View style={styles.joinedTag}>
+                <Text style={styles.joinedTagText}>joined</Text>
+              </View>
+            </View>
           ))}
 
           <TouchableOpacity style={styles.addMore} onPress={addPerson} activeOpacity={0.9}>
@@ -319,21 +338,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
-  guestChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
+  guestRow: {
+    borderColor: '#e0dcfb',
+    backgroundColor: '#faf9ff',
   },
-  guestChip: {
+  guestAvatar: {
+    backgroundColor: '#efedfd',
+  },
+  guestName: {
+    fontWeight: '600',
+    color: '#1c2433',
+  },
+  joinedTag: {
     backgroundColor: '#efedfd',
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  guestChipText: {
+  joinedTagText: {
     color: '#5b4ddb',
     fontWeight: '700',
+    fontSize: 12,
   },
   liveLinkButton: {
     flexDirection: 'row',

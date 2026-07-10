@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Pressable,
+  Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -22,8 +23,10 @@ import {
   flattenLiveClaims,
   portionLabel,
   buildHybridSummary,
+  computeGuestTotals,
   ManualItem,
 } from '../services/liveClaims';
+import { expandReceiptItems } from '../utils/receiptItems';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'SelectItems'>;
 type RouteProps = RouteProp<RootStackParamList, 'SelectItems'>;
@@ -37,21 +40,9 @@ const SelectItemsScreen: React.FC = () => {
   const route = useRoute<RouteProps>();
   const { items: rawItems, participants, restaurantName, totals, sessionId } = route.params;
 
-  // Expand quantity > 1 into individual rows with unit pricing. sourceId keeps a
-  // link back to the original receipt item (used to match against live claims).
-  const expandedItems = React.useMemo(() => {
-    return rawItems.flatMap((item) => {
-      const qty = Math.max(1, item.quantity || 1);
-      const unitPrice = qty > 1 ? Number((item.price / qty).toFixed(2)) : item.price;
-      return Array.from({ length: qty }).map((_, idx) => ({
-        ...item,
-        id: `${item.id}-${idx + 1}`,
-        sourceId: item.id,
-        quantity: 1,
-        price: unitPrice,
-      }));
-    });
-  }, [rawItems]);
+  // Expand quantities to unit-level rows. Uses the same helper that builds the
+  // live session, so each expanded row's id matches a live session item id.
+  const expandedItems = React.useMemo(() => expandReceiptItems(rawItems), [rawItems]);
 
   const buildSelectionMap = React.useCallback(() => {
     const map: SelectionMap = {};
@@ -77,9 +68,9 @@ const SelectItemsScreen: React.FC = () => {
 
   const claimLines = React.useMemo(() => flattenLiveClaims(liveSession), [liveSession]);
 
-  // Original receipt items that a live guest has already claimed — these are
-  // locked from manual assignment (live claim wins).
-  const claimedSourceIds = React.useMemo(() => {
+  // Unit ids that a live guest has already claimed (session item ids now match
+  // the expanded unit ids 1:1).
+  const claimedItemIds = React.useMemo(() => {
     const set = new Set<string>();
     liveSession?.items.forEach((item) => {
       if (item.claims.length > 0) set.add(item.itemId);
@@ -87,23 +78,17 @@ const SelectItemsScreen: React.FC = () => {
     return set;
   }, [liveSession]);
 
-  const claimantFor = React.useCallback(
-    (sourceId: string) => {
-      const item = liveSession?.items.find((i) => i.itemId === sourceId);
-      if (!item || item.claims.length === 0) return null;
-      return item.claims.map((c) => c.guestName).join(', ');
+  // Live claims on a specific unit (for read-only display next to manual assignment).
+  const liveClaimsFor = React.useCallback(
+    (unitId: string) => {
+      const item = liveSession?.items.find((i) => i.itemId === unitId);
+      return item?.claims ?? [];
     },
     [liveSession],
   );
 
-  const handleCloseSession = async () => {
+  const finalizeAndClose = async () => {
     if (!sessionId) return;
-    try {
-      await closeSession(sessionId);
-    } catch (err) {
-      console.warn('Failed to close session:', err);
-    }
-    // Merge live claims + manual assignments (live wins on any claimed item).
     const manualItems: ManualItem[] = expandedItems.map((i) => ({
       id: i.id,
       sourceId: i.sourceId,
@@ -114,8 +99,40 @@ const SelectItemsScreen: React.FC = () => {
     Object.entries(selectedByItem).forEach(([id, set]) => {
       selections[id] = Array.from(set);
     });
+    // Write per-guest final totals (combined live + manual) so the web page can
+    // show each guest what they owe.
+    const results = computeGuestTotals(liveSession, manualItems, selections, totals);
+    try {
+      await closeSession(sessionId, results);
+    } catch (err) {
+      console.warn('Failed to close session:', err);
+    }
     const summary = buildHybridSummary(liveSession, manualItems, selections, totals);
     navigation.navigate('Summary', { summary, restaurantName, totals });
+  };
+
+  const handleCloseSession = () => {
+    if (!sessionId) return;
+    // Warn if any items are neither claimed live nor manually assigned — their
+    // cost would otherwise silently drop out of the split.
+    const unclaimed = expandedItems.filter(
+      (i) => !claimedItemIds.has(i.id) && !selectedByItem[i.id]?.size,
+    );
+    if (unclaimed.length > 0) {
+      const amount = unclaimed.reduce((sum, i) => sum + i.price, 0);
+      Alert.alert(
+        'Some items are unassigned',
+        `${unclaimed.length} item${unclaimed.length > 1 ? 's' : ''} ($${amount.toFixed(
+          2,
+        )}) aren't claimed or assigned to anyone. Their cost won't be included in the split.`,
+        [
+          { text: 'Keep assigning', style: 'cancel' },
+          { text: 'Close anyway', style: 'destructive', onPress: finalizeAndClose },
+        ],
+      );
+      return;
+    }
+    finalizeAndClose();
   };
 
   // Dev-only: fake a guest claim so the live listener can be verified before the
@@ -241,7 +258,7 @@ const SelectItemsScreen: React.FC = () => {
               <Text style={styles.liveTitle}>Live session active</Text>
             </View>
             <Text style={styles.liveSub}>
-              {liveSession?.guests.length ?? 0} joined • claimed items are locked below; assign the rest manually
+              {liveSession?.guests.length ?? 0} joined • live claims show on items; tap to add more people to any item
             </Text>
             {claimLines.length === 0 ? (
               <Text style={styles.liveEmpty}>No claims yet — waiting for guests…</Text>
@@ -293,9 +310,9 @@ const SelectItemsScreen: React.FC = () => {
 
         <View style={styles.list}>
           {expandedItems.map((item) => {
-            // Live claim wins: if a guest claimed this item, lock it from manual assignment.
-            const claimedBy = sessionId ? claimantFor(item.sourceId) : null;
-            const locked = claimedBy != null;
+            // Claiming NEVER locks an item — it stays toggleable so more people
+            // (manual or live) can share it. Live claims are shown read-only.
+            const liveClaims = sessionId ? liveClaimsFor(item.id) : [];
             const isSelected = selectedByItem[item.id]?.has(activeParticipant);
             const selectedUsers = selectedByItem[item.id]
               ? Array.from(selectedByItem[item.id])
@@ -303,27 +320,31 @@ const SelectItemsScreen: React.FC = () => {
             return (
               <Pressable
                 key={item.id}
-                style={[styles.itemCard, locked && styles.itemCardLocked]}
+                style={styles.itemCard}
                 onPress={() => {
-                  if (locked || !activeParticipant) return;
+                  if (!activeParticipant) return;
                   toggleSelection(item.id);
                 }}
               >
                 <View style={styles.itemInfo}>
-                  {locked ? (
-                    <View style={styles.lockBadge}>
-                      <Text style={styles.lockBadgeText}>✓</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.indicatorOuter}>
-                      <View style={[styles.indicatorInner, isSelected && styles.indicatorSelected]} />
-                    </View>
-                  )}
+                  <View style={styles.indicatorOuter}>
+                    <View style={[styles.indicatorInner, isSelected && styles.indicatorSelected]} />
+                  </View>
                   <View style={styles.itemTextContainer}>
                     <Text style={styles.itemName}>{item.name}</Text>
-                    {locked ? (
-                      <Text style={styles.claimedMeta}>Claimed live by {claimedBy}</Text>
-                    ) : selectedUsers.length > 0 ? (
+                    {liveClaims.length > 0 ? (
+                      <View style={styles.claimTagRow}>
+                        {liveClaims.map((c) => (
+                          <View key={c.guestId} style={styles.claimTag}>
+                            <Text style={styles.claimTagText}>
+                              {c.guestName}
+                              {c.portion !== 1 ? ` (${portionLabel(c.portion).trim() || c.portion})` : ''} · live
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+                    {selectedUsers.length > 0 ? (
                       <View style={styles.avatarRow}>
                         {selectedUsers.map((user) => {
                           const idx = participants.indexOf(user);
@@ -423,29 +444,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  itemCardLocked: {
-    backgroundColor: '#f3f1fd',
-    borderWidth: 1,
-    borderColor: '#e0dcfb',
+  claimTagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
   },
-  lockBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#5b4ddb',
-    alignItems: 'center',
-    justifyContent: 'center',
+  claimTag: {
+    backgroundColor: '#efedfd',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  lockBadgeText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  claimedMeta: {
+  claimTagText: {
     color: '#5b4ddb',
     fontWeight: '600',
-    marginTop: 2,
-    fontSize: 13,
+    fontSize: 12,
   },
   itemInfo: {
     flexDirection: 'row',
