@@ -23,13 +23,19 @@
     .claimants { margin-top:8px; font-size:13px; color:var(--muted); }
     .claimants b { color:var(--ink); }
     .mine { color:var(--green); font-weight:700; }
-    .btns { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
     button { font:inherit; border:none; border-radius:999px; padding:10px 14px; font-weight:700; cursor:pointer; }
-    .btn-full { background:var(--green); color:#fff; }
-    .btn-half { background:#efedfd; color:#5b4ddb; border:1px solid #c6c0f5; }
-    .btn-remove { background:#fff; color:#ef4444; border:1px solid #f3c6c6; }
-    .btn-full.active { outline:3px solid #b9f0d3; }
-    .btn-half.active { outline:3px solid #d9d4fb; }
+    .card.item { cursor:pointer; -webkit-user-select:none; user-select:none; border:2px solid transparent;
+                 transition:border-color .12s ease, background .12s ease; }
+    .card.item.claimed { border-color:var(--green); background:#f1fbf6; }
+    .card.item.locked { cursor:default; }
+    .item-main { min-width:0; }
+    .item-right { display:flex; align-items:center; gap:12px; flex:none; }
+    .check { width:26px; height:26px; border-radius:50%; border:2px solid #cfd8e0; flex:none;
+             display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:15px; }
+    .check.on { background:var(--green); border-color:var(--green); }
+    .your-share { margin-top:10px; font-size:13px; font-weight:700; color:var(--green); }
+    .ready-btn { width:100%; margin-top:14px; background:var(--green); color:#fff; padding:15px; font-size:16px; }
+    .ready-btn.ready-on { background:#fff; color:var(--green); border:2px solid var(--green); }
     .join { background:#fff; border-radius:12px; padding:18px; box-shadow:0 2px 6px rgba(0,0,0,.05); }
     .join input { width:100%; padding:12px; border:1px solid var(--line); border-radius:10px; font:inherit; margin:10px 0; }
     .join button { width:100%; background:var(--green); color:#fff; }
@@ -102,9 +108,35 @@
 
     const ref = doc(db, 'sessions', sessionId);
     let latest = null;
+    let expiryTimer = null;
 
     function shareFor(price, portion, totalPortions) {
       return totalPortions <= 0 ? 0 : price * (portion / totalPortions);
+    }
+
+    // Whether the session is past its expiresAt deadline. Mirrors the app's
+    // isSessionExpired(); the authoritative check is in firestore.rules, which
+    // rejects claim/join writes server-side once this passes.
+    function isExpired(session) {
+      const ts = session && session.expiresAt;
+      if (!ts) return false;
+      const ms = typeof ts.toMillis === 'function'
+        ? ts.toMillis()
+        : (typeof ts.seconds === 'number' ? ts.seconds * 1000 : 0);
+      return ms > 0 && Date.now() >= ms;
+    }
+
+    // Snapshots stop once the session goes quiet, so an open tab wouldn't notice
+    // the deadline pass on its own. Schedule a one-shot re-render at expiry so
+    // the page flips itself to the expired state without a manual refresh.
+    function scheduleExpiryFlip(session) {
+      if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+      const ts = session.expiresAt;
+      const ms = ts && typeof ts.toMillis === 'function' ? ts.toMillis() : 0;
+      if (!ms) return;
+      const remaining = ms - Date.now();
+      if (remaining <= 0) return;
+      expiryTimer = setTimeout(() => render(latest), remaining + 500);
     }
 
     // Mirror of addGuestClaim() from the app, run unauthenticated per the rules.
@@ -116,6 +148,7 @@
           if (!snap.exists()) throw new Error('Session not found');
           const s = snap.data();
           if (s.status !== 'open') throw new Error('Session is closed');
+          if (isExpired(s)) throw new Error('This link has expired.');
           const items = s.items.map((item) => {
             if (item.itemId !== itemId) return item;
             const others = item.claims.filter((c) => c.guestId !== guestId);
@@ -124,7 +157,7 @@
           });
           const guests = s.guests.some((g) => g.guestId === guestId)
             ? s.guests
-            : [...s.guests, { guestId, name: guestName, joinedAt: Timestamp.now() }];
+            : [...s.guests, { guestId, name: guestName, joinedAt: Timestamp.now(), ready: false }];
           tx.update(ref, { items, guests });
         });
       } catch (e) {
@@ -133,6 +166,18 @@
     }
     window.__claim = claim; // used by inline handlers
 
+    // Tap-to-toggle: one claim per person per item (portion 1). Tapping an item
+    // adds you to it; tapping again removes you. The cost of an item is split
+    // evenly across everyone on it — so N people sharing = 1/N each — which the
+    // proportional math already handles without any "half" weighting.
+    function toggleClaim(itemId) {
+      if (!latest) return;
+      const item = latest.items.find((i) => i.itemId === itemId);
+      if (!item) return;
+      claim(itemId, myPortion(item) > 0 ? 0 : 1);
+    }
+    window.__toggle = toggleClaim;
+
     // Explicit join: only THIS action persists anything. It (1) confirms a
     // guestId, (2) writes the guest into the session's guests array, and (3)
     // saves { guestId, name } to the session-scoped localStorage key. Until it
@@ -140,7 +185,7 @@
     let joining = false; // re-entrancy guard: block double-taps while in flight
     async function joinSplit(typedName) {
       if (joining) return;
-      const name = (typedName || '').trim();
+      const name = (typedName || '').trim().slice(0, 40); // cap length on the public surface
       if (!name) return;
       joining = true;
       const btn = document.getElementById('joinBtn');
@@ -154,9 +199,10 @@
           if (!snap.exists()) throw new Error('Session not found');
           const s = snap.data();
           if (s.status !== 'open') throw new Error('This session is closed.');
+          if (isExpired(s)) throw new Error('This link has expired.');
           if (!s.guests.some((g) => g.guestId === id)) {
             tx.update(ref, {
-              guests: [...s.guests, { guestId: id, name, joinedAt: Timestamp.now() }],
+              guests: [...s.guests, { guestId: id, name, joinedAt: Timestamp.now(), ready: false }],
             });
           }
         });
@@ -179,12 +225,50 @@
       return mine ? mine.portion : 0;
     }
 
+    // Toggle my "I'm Ready" flag — the signal to the host that I'm done claiming.
+    // Lives in the guests array (same write path as claims), so no rules change.
+    async function setReady(ready) {
+      if (!guestId) return;
+      try {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists()) throw new Error('Session not found');
+          const s = snap.data();
+          if (s.status !== 'open') throw new Error('Session is closed');
+          if (isExpired(s)) throw new Error('This link has expired.');
+          const guests = s.guests.map((g) => (g.guestId === guestId ? { ...g, ready } : g));
+          tx.update(ref, { guests });
+        });
+      } catch (e) {
+        alert(e.message || 'Could not update your status.');
+      }
+    }
+    window.__ready = setReady;
+
     function render(session) {
       latest = session;
       if (!session) {
         appEl.innerHTML = '<div class="state err">This session doesn’t exist (or was removed).</div>';
         return;
       }
+
+      // Expiry gate: once past expiresAt, show the expired state immediately —
+      // regardless of open/closed status — instead of any claiming or summary
+      // UI. Placed before the name gate so it also overrides the join screen.
+      if (isExpired(session)) {
+        if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+        appEl.innerHTML = `
+          <header>
+            <h1>${esc(session.restaurantName || 'Split the bill')}</h1>
+            <p>This link has expired.</p>
+            <span class="badge closed">Expired</span>
+          </header>
+          <div class="card muted">This split link has expired, so it can no longer be used. Ask the host to start a new split.</div>`;
+        return;
+      }
+      // Not expired yet — arm the timer that flips this page to the expired
+      // state the moment the deadline passes.
+      scheduleExpiryFlip(session);
 
       // Name gate: not joined until guestId exists. The typed name lives only in
       // the input until "Join Split" is tapped — nothing is persisted before then.
@@ -194,7 +278,7 @@
             <p>Enter your name, then tap Join Split to start claiming.</p></header>
           <div class="join">
             <label class="muted">Your name</label>
-            <input id="nameInput" placeholder="e.g. Alex" autofocus />
+            <input id="nameInput" placeholder="e.g. Alex" maxlength="40" autofocus />
             <button id="joinBtn">Join Split</button>
           </div>`;
         const input = document.getElementById('nameInput');
@@ -205,6 +289,8 @@
       }
 
       const closed = session.status === 'closed';
+      const me = session.guests.find((g) => g.guestId === guestId);
+      const myReady = !!(me && me.ready);
       let myTotal = 0;
 
       const itemsHtml = session.items.map((item) => {
@@ -220,21 +306,26 @@
             }).join(', ')
           : '<span class="muted">Unclaimed</span>';
 
-        const controls = closed ? '' : `
-          <div class="btns">
-            <button class="btn-full ${mine === 1 ? 'active' : ''}" onclick="__claim('${item.itemId}',1)">I'll pay full</button>
-            <button class="btn-half ${mine === 0.5 ? 'active' : ''}" onclick="__claim('${item.itemId}',0.5)">Go half</button>
-            ${mine > 0 ? `<button class="btn-remove" onclick="__claim('${item.itemId}',0)">Remove</button>` : ''}
-          </div>`;
+        const count = item.claims.length;
+        const yourShare = mine > 0 ? shareFor(item.price, mine, totalPortions) : 0;
+        const shareLine = mine > 0
+          ? `<div class="your-share">Shared ${count} ${count === 1 ? 'way' : 'ways'} · you pay $${yourShare.toFixed(2)}</div>`
+          : '';
 
         return `
-          <div class="card">
+          <div class="card item ${mine > 0 ? 'claimed' : ''} ${closed ? 'locked' : ''}"
+               ${closed ? '' : `onclick="__toggle('${item.itemId}')"`}>
             <div class="item-top">
-              <div class="item-name">${esc(item.name)}</div>
-              <div class="item-price">$${Number(item.price).toFixed(2)}</div>
+              <div class="item-main">
+                <div class="item-name">${esc(item.name)}</div>
+                <div class="claimants">${claimants}</div>
+              </div>
+              <div class="item-right">
+                <div class="item-price">$${Number(item.price).toFixed(2)}</div>
+                ${closed ? '' : `<div class="check ${mine > 0 ? 'on' : ''}">${mine > 0 ? '✓' : ''}</div>`}
+              </div>
             </div>
-            <div class="claimants">${claimants}</div>
-            ${controls}
+            ${shareLine}
           </div>`;
       }).join('');
 
@@ -252,15 +343,24 @@
              <div class="hint">${closed ? 'The host closed this session.' : 'Updates live as you and others claim. Tax/tip added by the host.'}</div>
            </div>`;
 
+      // "I'm Ready" toggle — the host's close button waits on this. Hidden once
+      // the session is closed.
+      const readyHtml = closed
+        ? ''
+        : `<button class="ready-btn ${myReady ? 'ready-on' : ''}" onclick="__ready(${myReady ? 'false' : 'true'})">
+             ${myReady ? '✓ You’re ready — tap to undo' : "I'm Ready"}
+           </button>`;
+
       appEl.innerHTML = `
         <header>
           <h1>${esc(session.restaurantName || 'Split the bill')}</h1>
-          <p>Tap the items you had. Splitting with friends? Pick “Go half”.</p>
+          <p>Tap each item you had. Sharing one? Everyone who taps it splits it evenly.</p>
           <span class="badge ${closed ? 'closed' : ''}">${closed ? 'Session closed' : 'Live'}</span>
         </header>
         ${closed ? '<div class="card muted">The host closed this session. Your claims are locked in below.</div>' : ''}
         ${itemsHtml}
-        ${totalHtml}`;
+        ${totalHtml}
+        ${readyHtml}`;
     }
 
     function esc(s) {

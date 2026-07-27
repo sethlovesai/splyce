@@ -19,6 +19,7 @@ export type SessionGuest = {
   guestId: string;
   name: string;
   joinedAt: Timestamp;
+  ready: boolean; // guest tapped "I'm Ready" on the web page; link-joiners start false
 };
 
 export type SessionStatus = 'open' | 'closed';

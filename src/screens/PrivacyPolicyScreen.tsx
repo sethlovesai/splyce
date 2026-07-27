@@ -7,39 +7,60 @@ export default function PrivacyPolicyScreen() {
     <View style={styles.container}>
       <GradientHeader title="Privacy Policy" subtitle="How we handle your data" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text style={styles.updated}>Last updated: July 2026</Text>
+
         <Text style={styles.sectionTitle}>What We Process</Text>
         <Text style={styles.paragraph}>
-          - Receipt images you choose to scan or upload.{'\n'}
-          - Text extracted from receipts (items, totals).
+          - Photos of receipts you scan or upload.{'\n'}
+          - The details read from them (items, prices, totals, restaurant name).{'\n'}
+          - Names you or your guests enter when splitting a bill.
         </Text>
 
-        <Text style={styles.sectionTitle}>How We Use It</Text>
+        <Text style={styles.sectionTitle}>How Receipt Scanning Works</Text>
         <Text style={styles.paragraph}>
-          - To read your receipt and calculate bill splits.{'\n'}
-          - To show you past receipts on your device.
+          When you scan or upload a receipt, the image is sent to our server and to OpenAI to read
+          the items and prices. The image is used only to extract these details and is not stored
+          after processing.
         </Text>
 
-        <Text style={styles.sectionTitle}>Where It&apos;s Stored</Text>
-        <Text style={styles.paragraph}>- Locally on your device only.</Text>
+        <Text style={styles.sectionTitle}>Live Splitting</Text>
+        <Text style={styles.paragraph}>
+          - If you start a live split, the restaurant name, items, and the names of people in the
+          split are stored temporarily in Google Firebase so everyone you invite can claim their
+          items in real time.{'\n'}
+          - Starting a session creates an anonymous ID for you via Firebase — no name, email, or
+          login, just a random identifier so only you can manage your session.{'\n'}
+          - When someone opens your invite link, the name they enter is stored with the session and
+          in their own browser.{'\n'}
+          - This session data is deleted automatically a few hours after the split ends.
+        </Text>
+
+        <Text style={styles.sectionTitle}>Where Your Data Is Stored</Text>
+        <Text style={styles.paragraph}>
+          - Your receipt history is stored locally on your device.{'\n'}
+          - Live-split session data is stored in Google Firebase only for the life of the session,
+          then removed.
+        </Text>
 
         <Text style={styles.sectionTitle}>Third-Party Services</Text>
-        <Text style={styles.paragraph}>- OpenAI API is used to extract receipt details.</Text>
+        <Text style={styles.paragraph}>
+          - OpenAI — reads your receipt image to extract items and totals.{'\n'}
+          - Google Firebase — powers live splitting (temporary storage and anonymous sign-in).
+        </Text>
 
         <Text style={styles.sectionTitle}>What We Don&apos;t Collect</Text>
         <Text style={styles.paragraph}>
-          - No account details, location, payment info, or analytics.{'\n'}
-          - We do not upload or keep your data on our own servers.
+          - No accounts, emails, or passwords.{'\n'}
+          - No location, contacts, or payment information.{'\n'}
+          - No advertising or analytics tracking.
         </Text>
 
-        <Text style={styles.sectionTitle}>Data Retention</Text>
+        <Text style={styles.sectionTitle}>Data Retention &amp; Deletion</Text>
         <Text style={styles.paragraph}>
-          - Data stays on your device until you clear receipt history or uninstall the app.
-        </Text>
-
-        <Text style={styles.sectionTitle}>Your Control</Text>
-        <Text style={styles.paragraph}>
-          - You can delete receipts anytime from the app.{'\n'}- Uninstalling the app removes all
-          stored data.
+          - On-device receipts stay until you clear your history or uninstall the app.{'\n'}
+          - Live-split data expires automatically within about a day of the session ending.{'\n'}
+          - You can clear your receipt history anytime in Settings, and cancel a live session from
+          the app.
         </Text>
 
         <Text style={styles.sectionTitle}>Contact</Text>
@@ -67,5 +88,10 @@ const styles = StyleSheet.create({
   paragraph: {
     color: '#4a5565',
     lineHeight: 20,
+  },
+  updated: {
+    color: '#8a97a5',
+    fontSize: 12,
+    marginBottom: 2,
   },
 });

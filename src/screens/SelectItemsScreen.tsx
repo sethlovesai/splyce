@@ -17,7 +17,14 @@ import {
   ReceiptItem,
 } from '../types/navigation';
 import { GradientHeader } from '../components/GradientHeader';
-import { subscribeToSession, closeSession, addGuestClaim } from '../services/liveSession';
+import {
+  subscribeToSession,
+  closeSession,
+  addGuestClaim,
+  isSessionExpired,
+  withTimeout,
+} from '../services/liveSession';
+import { ensureHostId } from '../services/firebase';
 import { LiveSession } from '../types/session';
 import {
   flattenLiveClaims,
@@ -26,7 +33,7 @@ import {
   computeGuestTotals,
   ManualItem,
 } from '../services/liveClaims';
-import { expandReceiptItems } from '../utils/receiptItems';
+import { expandReceiptItems, unassignedItemsMessage } from '../utils/receiptItems';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'SelectItems'>;
 type RouteProps = RouteProp<RootStackParamList, 'SelectItems'>;
@@ -68,6 +75,31 @@ const SelectItemsScreen: React.FC = () => {
 
   const claimLines = React.useMemo(() => flattenLiveClaims(liveSession), [liveSession]);
 
+  // Readiness gate: link-joined guests each tap "I'm Ready" on the web page. The
+  // gate only applies when at least one guest has joined (a purely manual split
+  // has no one to wait on).
+  const liveGuests = liveSession?.guests ?? [];
+  const readyCount = liveGuests.filter((g) => g.ready).length;
+  const everyoneReady = liveGuests.length === 0 || readyCount === liveGuests.length;
+
+  // Expiry: a session past its expiresAt deadline is no longer live. Guests can
+  // no longer join/claim (enforced by firestore.rules); the host can still
+  // finalize the split from whatever claims exist.
+  const expired = isSessionExpired(liveSession);
+
+  // Snapshots stop arriving once guests can't write, so the clock crossing
+  // expiresAt won't re-render on its own. Schedule a one-shot re-render at the
+  // deadline so the UI flips to the expired state without a manual refresh.
+  const [, forceExpiryTick] = React.useState(0);
+  React.useEffect(() => {
+    const expiresMs = liveSession?.expiresAt ? liveSession.expiresAt.toMillis() : 0;
+    if (!expiresMs) return;
+    const remaining = expiresMs - Date.now();
+    if (remaining <= 0) return; // already expired; current render reflects it
+    const timer = setTimeout(() => forceExpiryTick((n) => n + 1), remaining + 500);
+    return () => clearTimeout(timer);
+  }, [liveSession?.expiresAt]);
+
   // Unit ids that a live guest has already claimed (session item ids now match
   // the expanded unit ids 1:1).
   const claimedItemIds = React.useMemo(() => {
@@ -102,31 +134,73 @@ const SelectItemsScreen: React.FC = () => {
     // Write per-guest final totals (combined live + manual) so the web page can
     // show each guest what they owe.
     const results = computeGuestTotals(liveSession, manualItems, selections, totals);
+    const summary = buildHybridSummary(liveSession, manualItems, selections, totals);
     try {
-      await closeSession(sessionId, results);
+      // Marking the session 'closed' is a host-only write, so make sure the
+      // host's anonymous auth token is attached before the request, and time-box
+      // it so a stalled write can't freeze the flow.
+      await ensureHostId();
+      await withTimeout(closeSession(sessionId, results), 10000, 'Close session');
     } catch (err) {
       console.warn('Failed to close session:', err);
+      Alert.alert(
+        "Couldn't close the live session",
+        `Your split is ready, but we couldn't confirm the session closed on the server, so guests may still see it as open.\n\n${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
-    const summary = buildHybridSummary(liveSession, manualItems, selections, totals);
-    navigation.navigate('Summary', { summary, restaurantName, totals });
+    // Route through the shared Review step (same as the manual flow) instead of
+    // jumping straight to Summary. Merge each unit's manual assignments with its
+    // live guest claims so the review shows everyone who's on every item.
+    const combinedSelections: Record<string, string[]> = {};
+    expandedItems.forEach((unit) => {
+      const manual = Array.from(selectedByItem[unit.id] ?? []);
+      const live = (liveSession?.items.find((it) => it.itemId === unit.id)?.claims ?? []).map(
+        (c) => c.guestName,
+      );
+      combinedSelections[unit.id] = Array.from(new Set([...manual, ...live]));
+    });
+    const claimNames = (liveSession?.items ?? []).flatMap((it) =>
+      it.claims.map((c) => c.guestName),
+    );
+    const allParticipants = Array.from(
+      new Set([...participants, ...(liveSession?.guests.map((g) => g.name) ?? []), ...claimNames]),
+    );
+    navigation.navigate('ReviewSelections', {
+      items: expandedItems,
+      selections: combinedSelections,
+      participants: allParticipants,
+      restaurantName,
+      totals,
+      summary,
+    });
   };
 
   const handleCloseSession = () => {
     if (!sessionId) return;
-    // Warn if any items are neither claimed live nor manually assigned — their
-    // cost would otherwise silently drop out of the split.
-    const unclaimed = expandedItems.filter(
+    // Hard block: closing locks guests out, so every item must be claimed live or
+    // assigned manually first — otherwise its cost silently drops from the split
+    // and there's no way back once the session is closed.
+    const unassigned = expandedItems.filter(
       (i) => !claimedItemIds.has(i.id) && !selectedByItem[i.id]?.size,
     );
-    if (unclaimed.length > 0) {
-      const amount = unclaimed.reduce((sum, i) => sum + i.price, 0);
+    if (unassigned.length > 0) {
+      Alert.alert('Assign every item first', unassignedItemsMessage(unassigned.map((i) => i.name)), [
+        { text: 'OK' },
+      ]);
+      return;
+    }
+    // Readiness gate: if guests have joined but not all tapped "I'm Ready", let
+    // the host wait or close early. Skipped once expired — guests can't ready then.
+    if (!everyoneReady && !expired) {
       Alert.alert(
-        'Some items are unassigned',
-        `${unclaimed.length} item${unclaimed.length > 1 ? 's' : ''} ($${amount.toFixed(
-          2,
-        )}) aren't claimed or assigned to anyone. Their cost won't be included in the split.`,
+        'Not everyone is ready',
+        `Only ${readyCount} of ${liveGuests.length} ${
+          liveGuests.length === 1 ? 'guest is' : 'guests are'
+        } ready. Close the session and split anyway?`,
         [
-          { text: 'Keep assigning', style: 'cancel' },
+          { text: 'Keep waiting', style: 'cancel' },
           { text: 'Close anyway', style: 'destructive', onPress: finalizeAndClose },
         ],
       );
@@ -252,16 +326,36 @@ const SelectItemsScreen: React.FC = () => {
         showsVerticalScrollIndicator={false}
       >
         {sessionId ? (
-          <View style={styles.livePanel}>
+          <View style={[styles.livePanel, expired && styles.livePanelExpired]}>
             <View style={styles.liveHeaderRow}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveTitle}>Live session active</Text>
+              <View style={[styles.liveDot, expired && styles.expiredDot]} />
+              <Text style={styles.liveTitle}>
+                {expired ? 'Session expired' : 'Live session active'}
+              </Text>
             </View>
             <Text style={styles.liveSub}>
-              {liveSession?.guests.length ?? 0} joined • live claims show on items; tap to add more people to any item
+              {expired
+                ? 'This live link has expired — guests can no longer join or change their claims. You can still finalize the split from the claims below.'
+                : `${liveGuests.length} joined${
+                    liveGuests.length > 0 ? ` · ${readyCount}/${liveGuests.length} ready` : ''
+                  } • tap items to add people`}
             </Text>
+            {!expired && liveGuests.length > 0 ? (
+              <View style={styles.readyRoster}>
+                {liveGuests.map((g) => (
+                  <View key={g.guestId} style={[styles.readyChip, g.ready && styles.readyChipOn]}>
+                    <Text style={[styles.readyChipText, g.ready && styles.readyChipTextOn]}>
+                      {g.ready ? '✓ ' : ''}
+                      {g.name}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
             {claimLines.length === 0 ? (
-              <Text style={styles.liveEmpty}>No claims yet — waiting for guests…</Text>
+              <Text style={styles.liveEmpty}>
+                {expired ? 'No claims were made before it expired.' : 'No claims yet — waiting for guests…'}
+              </Text>
             ) : (
               <View style={styles.liveClaimList}>
                 {claimLines.map((line) => (
@@ -273,7 +367,7 @@ const SelectItemsScreen: React.FC = () => {
                 ))}
               </View>
             )}
-            {__DEV__ ? (
+            {__DEV__ && !expired ? (
               <TouchableOpacity
                 style={styles.devButton}
                 onPress={handleSimulateGuestClaim}
@@ -373,7 +467,11 @@ const SelectItemsScreen: React.FC = () => {
             onPress={handleCloseSession}
             activeOpacity={0.9}
           >
-            <Text style={styles.calculateText}>Close Session &amp; Split</Text>
+            <Text style={styles.calculateText}>
+              {!expired && liveGuests.length > 0
+                ? `Splyce the Bill · ${readyCount}/${liveGuests.length} ready`
+                : 'Splyce the Bill'}
+            </Text>
           </TouchableOpacity>
         ) : (
           <>
@@ -389,7 +487,11 @@ const SelectItemsScreen: React.FC = () => {
               onPress={handleDone}
               activeOpacity={0.9}
             >
-              <Text style={styles.calculateText}>Done</Text>
+              <Text style={styles.calculateText}>
+                {participants.indexOf(activeParticipant) === participants.length - 1
+                  ? 'Splyce the Bill'
+                  : 'Done'}
+              </Text>
             </TouchableOpacity>
           </>
         )}
@@ -555,6 +657,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e0dcfb',
   },
+  livePanelExpired: {
+    borderColor: '#f1d9a8',
+    backgroundColor: '#fffaf0',
+  },
+  expiredDot: {
+    backgroundColor: '#f59e0b',
+  },
   liveHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -575,6 +684,32 @@ const styles = StyleSheet.create({
     color: '#6b7b8e',
     fontSize: 12,
     marginTop: 4,
+  },
+  readyRoster: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+  },
+  readyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#eef1f4',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  readyChipOn: {
+    backgroundColor: '#e7f7ee',
+    borderColor: '#bfe8cf',
+  },
+  readyChipText: {
+    color: '#6b7b8e',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  readyChipTextOn: {
+    color: '#16a34a',
   },
   liveClaimList: {
     marginTop: 10,

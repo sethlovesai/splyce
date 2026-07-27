@@ -18,6 +18,15 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { getReceipts, StoredReceipt, removeReceipt } from '../storage/receipts';
 
+// Receipt-card tints, white (most recent) → very light green (older), for a
+// subtle recency hierarchy that stays soft enough not to compete with the
+// primary action button. Index clamps at the last tint for long histories.
+const CARD_TINTS = ['#ffffff', '#f5faf7', '#eef5f0', '#e7f1ea'];
+const tintForIndex = (i: number) => CARD_TINTS[Math.min(i, CARD_TINTS.length - 1)];
+
+const initialOf = (name: string) => (name?.trim()?.charAt(0) || '?').toUpperCase();
+const MAX_AVATARS = 3;
+
 const HomeScreen: React.FC = () => {
   const router = useRouter();
   const [receipts, setReceipts] = useState<StoredReceipt[]>([]);
@@ -102,10 +111,10 @@ const HomeScreen: React.FC = () => {
         {/* <View style={styles.heroOverlay} /> */}
         <View style={styles.brandRow}>
           <View style={styles.brandLeft}>
-            <Image source={require('../../assets/images/splyce-logo.png')} style={styles.logo} />
+            <Image source={require('../../assets/images/splyce-logo-green.png')} style={styles.logo} />
             <View>
               {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
-              <Text style={styles.heroTitle}>Splyce.ai</Text>
+              <Text style={styles.heroTitle}>Splyce</Text>
             </View>
           </View>
           <TouchableOpacity
@@ -113,7 +122,7 @@ const HomeScreen: React.FC = () => {
             onPress={() => router.push('/Settings')}
             accessibilityLabel="Open settings"
           >
-            <Ionicons name="settings-outline" size={22} color="#ffffff" />
+            <Ionicons name="settings-outline" size={22} color="#0f1b2d" />
           </TouchableOpacity>
         </View>
         <Text style={styles.heroText}>Scan, split, and settle up in seconds.</Text>
@@ -188,30 +197,61 @@ const HomeScreen: React.FC = () => {
             data={receipts}
             keyExtractor={(item) => item.id}
             scrollEnabled={false}
-            renderItem={({ item }) => (
-              <View style={styles.splitCard}>
-                <View style={styles.splitCardContent}>
-                  <Ionicons
-                    name="receipt-outline"
-                    size={20}
-                    color="#1ec873"
-                    style={styles.splitCardIcon}
-                  />
-                  <View>
-                    <Text style={styles.splitTitle}>{item.restaurantName}</Text>
-                    <Text style={styles.splitSubtitle}>
-                      {new Date(item.date).toLocaleDateString()}
-                    </Text>
+            renderItem={({ item, index }) => {
+              const people = item.summary ?? [];
+              const splitCount = people.length;
+              const isSplit = splitCount > 1;
+              const visible = people.slice(0, MAX_AVATARS);
+              const overflow = splitCount - visible.length;
+              return (
+                <View style={[styles.splitCard, { backgroundColor: tintForIndex(index) }]}>
+                  <View style={styles.splitTopRow}>
+                    <View style={styles.splitTitleBlock}>
+                      <Text style={styles.splitTitle} numberOfLines={1}>
+                        {item.restaurantName}
+                      </Text>
+                      <Text style={styles.splitSubtitle}>
+                        {new Date(item.date).toLocaleDateString()}
+                      </Text>
+                    </View>
+                    <Text style={styles.splitAmount}>${item.total.toFixed(2)}</Text>
+                  </View>
+
+                  <View style={styles.splitBottomRow}>
+                    {isSplit ? (
+                      <View style={styles.avatarCluster}>
+                        <View style={styles.avatarStack}>
+                          {visible.map((p, i) => (
+                            <View
+                              key={`${p.name}-${i}`}
+                              style={[styles.avatarCircle, i > 0 && styles.avatarOverlap]}
+                            >
+                              <Text style={styles.avatarInitial}>{initialOf(p.name)}</Text>
+                            </View>
+                          ))}
+                          {overflow > 0 ? (
+                            <View style={[styles.avatarCircle, styles.avatarOverlap, styles.avatarMore]}>
+                              <Text style={styles.avatarInitial}>+{overflow}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.splitWaysText}>split {splitCount} ways</Text>
+                      </View>
+                    ) : (
+                      <View />
+                    )}
+                    <TouchableOpacity
+                      onPress={() => handleDelete(item.id)}
+                      hitSlop={8}
+                      style={styles.deleteButton}
+                      accessibilityLabel="Delete receipt"
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#b8c2cc" />
+                    </TouchableOpacity>
                   </View>
                 </View>
-                <View style={styles.splitActions}>
-                  <Text style={styles.splitAmount}>${item.total.toFixed(2)}</Text>
-                  <TouchableOpacity onPress={() => handleDelete(item.id)} hitSlop={8}>
-                    <Ionicons name="trash-outline" size={20} color="#d94c3f" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+              );
+            }}
           />
         )}
       </View>
@@ -229,11 +269,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   hero: {
-    backgroundColor: 'rgba(46,183,116,1.00)',
+    backgroundColor: '#f5f7fa',
     paddingTop: 60,
     paddingHorizontal: 20,
-    paddingBottom: 60,
-    // backgroundColor: '#2acd84',
+    paddingBottom: 24,
     overflow: 'hidden',
   },
   heroOverlay: {
@@ -265,25 +304,32 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   heroTitle: {
-    color: '#ffffff',
+    color: '#0f1b2d',
     fontSize: 32,
     fontWeight: '700',
   },
   heroText: {
-    color: '#e8ffef',
+    color: '#556274',
     marginTop: 5,
     fontSize: 15,
   },
   settingsButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e6ecf2',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cardGrid: {
-    marginTop: -28,
+    marginTop: 4,
     paddingHorizontal: 20,
   },
   actionCard: {
@@ -343,48 +389,85 @@ const styles = StyleSheet.create({
     color: '#0f1b2d',
   },
   splitCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#eef2ef',
+    shadowColor: '#0f1b2d',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
-  splitCardContent: {
+  splitTopRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  splitCardIcon: {
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: '#2eb774',
-    color: 'white',
+  splitTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   splitTitle: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '800',
     color: '#0f1b2d',
   },
   splitSubtitle: {
     color: '#7a8a9b',
-    marginTop: 2,
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: '500',
   },
   splitAmount: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f1b2d',
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#12a05a',
   },
-  splitActions: {
+  splitBottomRow: {
+    marginTop: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
+  },
+  avatarCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  avatarStack: {
+    flexDirection: 'row',
+  },
+  avatarCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#c9ead7',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarOverlap: {
+    marginLeft: -9,
+  },
+  avatarMore: {
+    backgroundColor: '#b6e2c8',
+  },
+  avatarInitial: {
+    color: '#2f9e5f',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  splitWaysText: {
+    color: '#7a8a9b',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    padding: 4,
   },
   emptyText: {
     color: '#7a8a9b',

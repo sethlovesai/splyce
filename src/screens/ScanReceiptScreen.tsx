@@ -5,13 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  ActivityIndicator,
   Alert,
   Linking,
   Platform,
 } from 'react-native';
-import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
-import { NativeStackNavigationProp, RouteProp } from '@react-navigation/native-stack';
+import { useIsFocused, useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -37,6 +36,10 @@ const mockTotals: Totals = {
 
 const mockParticipants = ['You', 'Alex', 'Sam', 'Jordan'];
 
+// Shown in sequence while the receipt is being uploaded + parsed: reads first,
+// then holds on the last phrase (with animated dots) until the backend returns.
+const LOADING_PHRASES = ['Reading the receipt', 'Splycing the bill'];
+
 const ScanReceiptScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
@@ -47,7 +50,25 @@ const ScanReceiptScreen: React.FC = () => {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [statusText, setStatusText] = useState<string | null>(null);
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [dots, setDots] = useState('');
+
+  // Drive the loading-phrase sequence + animated dots while processing.
+  useEffect(() => {
+    if (!isProcessing) return;
+    setPhraseIndex(0);
+    setDots('');
+    const phraseTimer = setInterval(() => {
+      setPhraseIndex((i) => Math.min(i + 1, LOADING_PHRASES.length - 1));
+    }, 1800);
+    const dotTimer = setInterval(() => {
+      setDots((d) => (d.length >= 3 ? '' : `${d}.`));
+    }, 400);
+    return () => {
+      clearInterval(phraseTimer);
+      clearInterval(dotTimer);
+    };
+  }, [isProcessing]);
 
   const ensureCameraPermission = async () => {
     if (permission?.granted) return true;
@@ -135,7 +156,6 @@ const ScanReceiptScreen: React.FC = () => {
   const handleUsePhoto = async () => {
     if (!imageUri) return;
     setError(null);
-    setStatusText('Reading receipt with AI...');
     setIsProcessing(true);
 
     try {
@@ -185,7 +205,6 @@ const ScanReceiptScreen: React.FC = () => {
       setError(`${message} Try retaking or uploading a clearer photo.`);
     } finally {
       setIsProcessing(false);
-      setStatusText(null);
     }
   };
 
@@ -247,54 +266,42 @@ const ScanReceiptScreen: React.FC = () => {
         ) : null}
 
         <View style={styles.tips}>
-          {statusText ? <Text style={styles.statusText}>{statusText}</Text> : <Text style={styles.tipText}>💡 Tips: Good lighting helps • Keep receipt flat • Include the total</Text>}
+          {isProcessing ? (
+            <Text style={styles.loadingText}>
+              {LOADING_PHRASES[phraseIndex]}
+              {dots}
+            </Text>
+          ) : (
+            <Text style={styles.tipText}>💡 Tips: Good lighting helps • Keep receipt flat • Include the total</Text>
+          )}
         </View>
 
         <View style={styles.actions}>
-          {imageUri ? (
+          {isProcessing ? null : imageUri ? (
             <>
-              <TouchableOpacity
-                style={[styles.primaryButton, isProcessing && styles.disabledButton]}
-                onPress={handleUsePhoto}
-                activeOpacity={0.9}
-                disabled={isProcessing}
-              >
-                {isProcessing ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>Use Photo</Text>
-                )}
+              <TouchableOpacity style={styles.primaryButton} onPress={handleUsePhoto} activeOpacity={0.9}>
+                <Text style={styles.primaryButtonText}>Use Photo</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={handleRetake}
-                activeOpacity={0.9}
-                disabled={isProcessing}
-              >
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleRetake} activeOpacity={0.9}>
                 <Text style={styles.secondaryButtonText}>Retake Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.ghostButton} onPress={() => navigation.goBack()}>
+                <Text style={styles.ghostButtonText}>Cancel</Text>
               </TouchableOpacity>
             </>
           ) : (
             <>
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={handleCapture}
-                activeOpacity={0.9}
-              >
+              <TouchableOpacity style={styles.primaryButton} onPress={handleCapture} activeOpacity={0.9}>
                 <Text style={styles.primaryButtonText}>Capture</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={handleUploadReceipt}
-                activeOpacity={0.9}
-              >
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleUploadReceipt} activeOpacity={0.9}>
                 <Text style={styles.secondaryButtonText}>Upload from Library</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.ghostButton} onPress={() => navigation.goBack()}>
+                <Text style={styles.ghostButtonText}>Cancel</Text>
               </TouchableOpacity>
             </>
           )}
-          <TouchableOpacity style={styles.ghostButton} onPress={() => navigation.goBack()}>
-            <Text style={styles.ghostButtonText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -346,6 +353,7 @@ const styles = StyleSheet.create({
   },
   tips: {
     marginBottom: 16,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -376,8 +384,11 @@ const styles = StyleSheet.create({
   },
   actions: {
     paddingBottom: 8,
+    // Reserve the button-stack height so swapping to the loading state doesn't
+    // shrink this row and let the flex:1 camera frame above grow.
+    minHeight: 176,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     width: '100%',
   },
   primaryButton: {
@@ -419,9 +430,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
   },
-  disabledButton: {
-    opacity: 0.8,
-  },
   ghostButton: {
     alignItems: 'center',
     paddingVertical: 12,
@@ -431,10 +439,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  statusText: {
-    marginTop: 10,
-    textAlign: 'center',
+  loadingText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#6b7b8e',
+    textAlign: 'center',
+    minWidth: 220,
   },
 });
 

@@ -30,3 +30,19 @@ export function expandReceiptItems(items: ReceiptItem[]): ExpandedItem[] {
     }));
   });
 }
+
+/**
+ * Alert body for items that nobody has been assigned to / claimed, blocking a
+ * split until they're handled. Names are deduped so two unclaimed units of the
+ * same item ("Nuggets (1 of 2)", "Nuggets (2 of 2)") don't read as duplicates.
+ */
+export function unassignedItemsMessage(names: string[]): string {
+  const unique = Array.from(new Set(names));
+  if (unique.length === 1) {
+    return `${unique[0]} hasn't been assigned to anyone — assign it before splitting.`;
+  }
+  return (
+    `${unique.length} items haven't been assigned to anyone: ${unique.join(', ')}. ` +
+    'Assign them before splitting.'
+  );
+}

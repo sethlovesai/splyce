@@ -49,3 +49,8 @@ server/.env
 
 # Firebase hosting deploy cache
 .firebase/
+
+# Firebase Admin service account keys (used by scripts/cleanupExpiredSessions.mjs) — never commit
+serviceAccountKey.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json

@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 
 import { GradientHeader } from '../components/GradientHeader';
 import { RootStackParamList, ReceiptItem, SummaryEntry } from '../types/navigation';
+import { unassignedItemsMessage } from '../utils/receiptItems';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'ReviewSelections'>;
 type RouteProps = RouteProp<RootStackParamList, 'ReviewSelections'>;
@@ -23,8 +24,22 @@ export default function ReviewSelectionsScreen() {
     return PARTICIPANT_COLORS[idx % PARTICIPANT_COLORS.length] || '#1ec873';
   };
 
-  const handleContinue = () => {
+  const proceedToSummary = () => {
     navigation.navigate('Summary', { summary, restaurantName, totals });
+  };
+
+  const handleContinue = () => {
+    // Warn if any item has nobody assigned — its cost silently drops out of
+    // everyone's share — but let the host override and split anyway.
+    const unassigned = items.filter((item) => !(selections[item.id]?.length));
+    if (unassigned.length > 0) {
+      Alert.alert('Assign every item first', unassignedItemsMessage(unassigned.map((i) => i.name)), [
+        { text: 'Keep assigning', style: 'cancel' },
+        { text: 'Splyce anyway', style: 'destructive', onPress: proceedToSummary },
+      ]);
+      return;
+    }
+    proceedToSummary();
   };
 
   return (
@@ -67,7 +82,7 @@ export default function ReviewSelectionsScreen() {
           <Text style={styles.totalValue}>${totalBill.toFixed(2)}</Text>
         </View>
         <TouchableOpacity style={styles.primaryButton} onPress={handleContinue} activeOpacity={0.9}>
-          <Text style={styles.primaryText}>Splice the Receipt</Text>
+          <Text style={styles.primaryText}>Splyce the Receipt</Text>
         </TouchableOpacity>
       </View>
     </View>

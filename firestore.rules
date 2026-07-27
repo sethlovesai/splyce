@@ -28,6 +28,17 @@ service cloud.firestore {
                  .hasOnly(['items', 'guests']);
       }
 
+      // A session is live only until its expiresAt deadline. Guest writes
+      // (claims/joins) are rejected server-side once it passes, so a client that
+      // bypasses the UI still can't mutate an expired session. request.time is
+      // the server's clock, so this can't be spoofed by the caller. Sessions
+      // with no expiresAt (should not exist, but be safe) are treated as live.
+      function notExpired() {
+        return !('expiresAt' in resource.data)
+               || resource.data.expiresAt == null
+               || request.time < resource.data.expiresAt;
+      }
+
       // Anyone who knows the sessionId can read it (guests aren't authed).
       allow read: if true;
 
@@ -38,13 +49,16 @@ service cloud.firestore {
                     && request.resource.data.status == 'open';
 
       // Update:
-      //  - The host may update anything on their own session (incl. status).
+      //  - The host may update anything on their own session (incl. status),
+      //    even past expiry, so they can still close/finalize an expired split.
       //  - A guest may update ONLY items/guests, and only while the session is
-      //    open and stays open (can't flip status, change host, receipt, etc.).
+      //    open, stays open, and hasn't expired (can't flip status, change
+      //    host, receipt, or touch a session past its deadline).
       allow update: if isHost()
                     || (
                          resource.data.status == 'open'
                          && request.resource.data.status == 'open'
+                         && notExpired()
                          && onlyClaimFieldsChanged()
                        );
 

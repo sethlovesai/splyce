@@ -7,21 +7,26 @@ import {
   TouchableOpacity,
   TextInput,
   Share,
+  Alert,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Clipboard from 'expo-clipboard';
 
 import { RootStackParamList } from '../types/navigation';
 import { GradientHeader } from '../components/GradientHeader';
 import { ensureHostId } from '../services/firebase';
-import { createSession, subscribeToSession, addGuest } from '../services/liveSession';
+import { createSession, subscribeToSession, addGuest, deleteSession } from '../services/liveSession';
 import { LiveSession } from '../types/session';
 import { expandReceiptItems } from '../utils/receiptItems';
 
 // Guest join page, served by Firebase Hosting (see web-guest/ + firebase.json).
 const LIVE_LINK_BASE = 'https://splyce-6739e.web.app/join';
+
+const initialOf = (name: string) => (name?.trim()?.charAt(0) || '?').toUpperCase();
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddParticipants'>;
 type RouteProps = RouteProp<RootStackParamList, 'AddParticipants'>;
@@ -31,12 +36,19 @@ export default function AddParticipantsScreen() {
   const route = useRoute<RouteProps>();
   const { items, restaurantName, totals } = route.params;
 
-  const [names, setNames] = useState<string[]>(['You', 'Person 2', 'Person 3']);
+  const [names, setNames] = useState<string[]>(['You']);
 
   // --- Live session (host gathers guests here, before item selection) ---
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Once the host continues to item selection, SelectItems owns the session (it
+  // finalizes it), so this screen must not cancel it on unmount.
+  const handedOffRef = React.useRef(false);
+
+  const liveUrl = sessionId ? `${LIVE_LINK_BASE}/${sessionId}` : '';
+  const displayUrl = liveUrl.replace(/^https?:\/\//, '');
 
   React.useEffect(() => {
     if (!sessionId) return;
@@ -59,18 +71,79 @@ export default function AddParticipantsScreen() {
         hostId,
       );
       setSessionId(id);
-      const url = `${LIVE_LINK_BASE}/${id}`;
-      await Share.share({
-        message: `Join my Splyce bill for ${restaurantName} and claim your items: ${url}`,
-        url,
-        title: `Splyce live split — ${restaurantName}`,
-      });
+      // The live card expands inline to show the link, roster and controls —
+      // no OS share sheet fired automatically.
     } catch (err) {
       console.warn('Failed to start live session:', err);
     } finally {
       setCreatingSession(false);
     }
   };
+
+  const handleCopyLink = async () => {
+    if (!liveUrl) return;
+    await Clipboard.setStringAsync(liveUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleShareLink = async () => {
+    if (!liveUrl) return;
+    try {
+      await Share.share({
+        message: `Join my Splyce bill for ${restaurantName} and claim your items: ${liveUrl}`,
+        url: liveUrl,
+        title: `Splyce live split — ${restaurantName}`,
+      });
+    } catch (err) {
+      console.warn('Share failed:', err);
+    }
+  };
+
+  // Auto-cleanup: if the host backs out of this screen while a live session is
+  // still open and unfinalized, cancel it so we don't leave an orphaned doc.
+  // Continuing forward to item selection keeps this screen mounted, so this only
+  // fires on a genuine back-out — the finalize/close happens later on SelectItems.
+  React.useEffect(() => {
+    const unsub = navigation.addListener('beforeRemove', (e) => {
+      if (handedOffRef.current) return; // SelectItems owns the session now
+      if (!sessionId || liveSession?.status === 'closed') return;
+      const joined = liveSession?.guests?.length ?? 0;
+
+      if (joined === 0) {
+        // Nobody joined — silently discard the abandoned session (best-effort;
+        // the Firestore TTL policy is the backstop if this write doesn't land).
+        ensureHostId()
+          .then(() => deleteSession(sessionId))
+          .catch((err) => console.warn('Failed to delete abandoned session:', err));
+        return; // let navigation proceed
+      }
+
+      // People already joined — confirm before cancelling their claims.
+      e.preventDefault();
+      Alert.alert(
+        'Leave and cancel this split?',
+        `${joined} ${joined === 1 ? 'person has' : 'people have'} joined. Going back cancels the live session and their claims.`,
+        [
+          { text: 'Stay', style: 'cancel' },
+          {
+            text: 'Cancel split',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await ensureHostId();
+                await deleteSession(sessionId);
+              } catch (err) {
+                console.warn('Failed to delete session:', err);
+              }
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ],
+      );
+    });
+    return unsub;
+  }, [navigation, sessionId, liveSession]);
 
   // Dev-only: fake a guest joining, to test the live roster without a 2nd device.
   const handleSimulateJoin = async () => {
@@ -101,6 +174,7 @@ export default function AddParticipantsScreen() {
     // Live guests claim their own items, so a session alone is enough to proceed.
     if (participants.length === 0 && !sessionId) return;
 
+    handedOffRef.current = true; // SelectItems now owns any live session
     navigation.navigate('SelectItems', {
       items,
       participants,
@@ -163,16 +237,54 @@ export default function AddParticipantsScreen() {
                 <View style={styles.liveDot} />
                 <Text style={styles.liveTitle}>Live link active</Text>
               </View>
-              <Text style={styles.liveSub}>
-                {guests.length === 0
-                  ? 'Waiting for people to join… they’ll appear in the list below.'
-                  : `${guests.length} joined via link — shown in the list below.`}
-              </Text>
-              {__DEV__ ? (
-                <TouchableOpacity style={styles.devButton} onPress={handleSimulateJoin} activeOpacity={0.8}>
-                  <Text style={styles.devButtonText}>+ Simulate join (dev)</Text>
+
+              <View style={styles.urlPill}>
+                <Text style={styles.urlText} numberOfLines={1} ellipsizeMode="middle">
+                  {displayUrl}
+                </Text>
+              </View>
+
+              <View style={styles.linkButtonsRow}>
+                <TouchableOpacity style={styles.copyButton} onPress={handleCopyLink} activeOpacity={0.9}>
+                  <Ionicons name={copied ? 'checkmark' : 'link'} size={18} color="#ffffff" />
+                  <Text style={styles.copyButtonText}>{copied ? 'Copied!' : 'Copy Link'}</Text>
                 </TouchableOpacity>
-              ) : null}
+                <TouchableOpacity style={styles.shareButton} onPress={handleShareLink} activeOpacity={0.9}>
+                  <Text style={styles.shareButtonText}>Share…</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.linkDivider} />
+
+              <View style={styles.joinedRow}>
+                <View style={styles.joinedLeft}>
+                  <View style={styles.joinedDot} />
+                  <Text style={styles.joinedText}>
+                    {guests.length} of {names.length} joined
+                  </Text>
+                </View>
+                {__DEV__ ? (
+                  <TouchableOpacity onPress={handleSimulateJoin} hitSlop={8}>
+                    <Text style={styles.simulateLink}>Simulate a join</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {guests.length > 0 ? (
+                <View style={styles.rosterRow}>
+                  {guests.map((g, i) => (
+                    <View key={g.guestId} style={[styles.rosterAvatar, i > 0 && styles.rosterOverlap]}>
+                      <Text style={styles.rosterInitial}>{initialOf(g.name)}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.rosterEmpty}>No one has joined yet.</Text>
+              )}
+
+              <Text style={styles.cancelHint}>
+                Going back cancels this live session.
+              </Text>
             </>
           ) : (
             <TouchableOpacity
@@ -333,11 +445,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1c2433',
   },
-  liveSub: {
-    color: '#6b7b8e',
-    fontSize: 13,
-    marginTop: 4,
-  },
   guestRow: {
     borderColor: '#e0dcfb',
     backgroundColor: '#faf9ff',
@@ -376,19 +483,118 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 15,
   },
-  devButton: {
-    marginTop: 12,
-    borderRadius: 8,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#c6c0f5',
+  // --- Live link controls (inline in the live card) ---
+  urlPill: {
+    backgroundColor: '#eef2f0',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 14,
   },
-  devButtonText: {
-    color: '#5b4ddb',
+  urlText: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontSize: 15,
+    color: '#1c2433',
+    textAlign: 'center',
+  },
+  linkButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  copyButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#1ec873',
+  },
+  copyButtonText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  shareButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d5dbe2',
+    backgroundColor: '#ffffff',
+  },
+  shareButtonText: {
+    color: '#1c2433',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  linkDivider: {
+    height: 1,
+    backgroundColor: '#eef1f4',
+    marginVertical: 18,
+  },
+  joinedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  joinedLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  joinedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#1ec873',
+  },
+  joinedText: {
+    color: '#4a5565',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  simulateLink: {
+    color: '#1ec873',
+    fontSize: 14,
     fontWeight: '700',
-    fontSize: 13,
+    textDecorationLine: 'underline',
+  },
+  rosterRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+  },
+  rosterAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#1ec873',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  rosterOverlap: {
+    marginLeft: -10,
+  },
+  rosterInitial: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  rosterEmpty: {
+    marginTop: 16,
+    color: '#9aa8b6',
+    fontSize: 14,
+  },
+  cancelHint: {
+    marginTop: 16,
+    color: '#9aa8b6',
+    fontSize: 12,
+    textAlign: 'center',
   },
   sectionLabel: {
     marginTop: 20,
