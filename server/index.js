@@ -133,8 +133,10 @@ app.post('/api/parse-receipt', parseLimiter, requireApiKey, upload.single('file'
 // ever leaks to the client (e.g. multer upload-too-large).
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(413).json({ error: 'Upload too large.' });
+  // Image over the limit — whether caught by multer (multipart) or the JSON body
+  // parser (`entity.too.large`). Return a clean, friendly 413 either way.
+  if (err instanceof multer.MulterError || err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({ error: 'Image is too large. Please use a smaller photo.' });
   }
   console.error(err);
   return res.status(500).json({ error: 'Something went wrong.' });
