@@ -65,5 +65,46 @@ service cloud.firestore {
       // Only the host may delete the session.
       allow delete: if isHost();
     }
+
+    // Free-tier scan counting: one doc per user at usage/{uid}, keyed by their
+    // anonymous auth uid, holding only { scanCount, monthKey }. A user may
+    // read/write only their own doc. Unlock status is NOT here — it's RevenueCat's
+    // server-validated "Splyce Pro" entitlement, so tampering with this doc only
+    // affects the free-tier counter, never the paid unlock.
+    match /usage/{userId} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function validShape() {
+        return request.resource.data.keys().hasOnly(['scanCount', 'monthKey'])
+               && request.resource.data.scanCount is int
+               && request.resource.data.monthKey is string;
+      }
+
+      allow read: if isOwner();
+
+      // A brand-new doc must start the count at exactly 1 (recordScan's first
+      // call for this user/month) — never an arbitrary or negative value.
+      allow create: if isOwner() && validShape() && request.resource.data.scanCount == 1;
+
+      // Writes may only move the count forward by exactly 1 within the same
+      // month, or reset to 1 on a month rollover — never jump to an arbitrary
+      // value (e.g. back to 0) to dodge the paywall. Note: rules can't format
+      // request.time into a "YYYY-MM" string, so this can't verify monthKey
+      // against the real server month, only that old/new values are internally
+      // consistent — full protection against monthKey spoofing needs the
+      // increment to move server-side.
+      allow update: if isOwner() && validShape() &&
+                    (
+                      (request.resource.data.monthKey == resource.data.monthKey
+                       && request.resource.data.scanCount == resource.data.scanCount + 1)
+                      ||
+                      (request.resource.data.monthKey != resource.data.monthKey
+                       && request.resource.data.scanCount == 1)
+                    );
+
+      allow delete: if false;
+    }
   }
 }
