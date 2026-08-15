@@ -67,7 +67,7 @@ app.post('/api/parse-receipt', parseLimiter, requireApiKey, upload.single('file'
     }
 
     const prompt =
-      'You extract structured data from restaurant receipts. First, decide if the image is actually a receipt and if the receipt is visible. Return ONLY JSON matching this shape: { "isReceipt": boolean, "restaurantName": string|null, "date": string|null, "items": [ { "name": string, "price": number, "quantity": number } ], "totals": { "subtotal": number, "tax": number, "tip": number, "serviceCharge"?: number, "total": number } }. Use quantity 1 if not present. Round prices to two decimals. Never include markdown or code fences.';
+      'You extract structured data from restaurant receipts. First, decide if the image is actually a receipt and if the receipt is visible. Return ONLY JSON matching this shape: { "isReceipt": boolean, "restaurantName": string|null, "date": string|null, "items": [ { "name": string, "price": number, "quantity": number } ], "totals": { "subtotal": number, "tax": number, "tip": number, "serviceCharge"?: number, "total": number }, "category": string }. For "category", pick the single best match from exactly these options: "Eating out", "Coffee", "Drinks", "Groceries", "Other bills" — use "Other bills" if none clearly fit. Use quantity 1 if not present. Round prices to two decimals. Never include markdown or code fences.';
 
     const controller = new AbortController();
     const timeoutMs = 10_000;
