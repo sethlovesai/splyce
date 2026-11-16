@@ -2,10 +2,12 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking, ScrollView } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { GradientHeader } from '../components/GradientHeader';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { clearReceipts } from '../storage/receipts';
+import { getUsage, FREE_SCANS_PER_MONTH, UsageState } from '../services/usage';
+import { isUnlocked, restoreUnlock } from '../services/iap';
 
 const accent = '#1ec873';
 const sectionBg = '#ffffff';
@@ -13,6 +15,45 @@ const rowBorder = '#edf1f4';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [usage, setUsage] = React.useState<UsageState | null>(null);
+  const [unlocked, setUnlocked] = React.useState<boolean | null>(null);
+  const [planLoadError, setPlanLoadError] = React.useState<string | null>(null);
+
+  const loadPlanStatus = React.useCallback(() => {
+    setPlanLoadError(null);
+    getUsage()
+      .then(setUsage)
+      .catch((e) => {
+        console.warn('Failed to load usage:', e);
+        setPlanLoadError(e instanceof Error ? e.message : String(e));
+      });
+    isUnlocked()
+      .then(setUnlocked)
+      .catch((e) => {
+        console.warn('Failed to check unlock status:', e);
+        setPlanLoadError((prev) => prev ?? (e instanceof Error ? e.message : String(e)));
+      });
+  }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadPlanStatus();
+    }, [loadPlanStatus]),
+  );
+
+  const handleRestore = async () => {
+    try {
+      const restored = await restoreUnlock();
+      if (restored) {
+        setUnlocked(true);
+        Alert.alert('Purchase restored', 'Your unlimited scans are back.');
+      } else {
+        Alert.alert('Nothing to restore', 'We couldn’t find a previous purchase on this account.');
+      }
+    } catch {
+      Alert.alert('Restore failed', 'Please try again.');
+    }
+  };
 
   const handleClearHistory = () => {
     Alert.alert(
@@ -43,6 +84,48 @@ export default function SettingsScreen() {
     <View style={styles.container}>
       <GradientHeader title="Settings" subtitle="Manage your preferences" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Plan</Text>
+          <View style={styles.row}>
+            <Text style={styles.rowText}>
+              {unlocked
+                ? 'Unlimited scans unlocked'
+                : usage
+                ? `${usage.scanCount} of ${FREE_SCANS_PER_MONTH} free scans used this month`
+                : planLoadError
+                ? "Couldn't check your plan"
+                : 'Loading…'}
+            </Text>
+            {unlocked ? <Ionicons name="checkmark-circle" size={18} color={accent} /> : null}
+          </View>
+          {planLoadError ? (
+            <TouchableOpacity style={styles.errorRow} onPress={loadPlanStatus} activeOpacity={0.8}>
+              <Text style={styles.errorText} numberOfLines={2}>
+                {planLoadError}
+              </Text>
+              <Text style={styles.errorAction}>Tap to retry</Text>
+            </TouchableOpacity>
+          ) : null}
+          {unlocked !== true ? (
+            <>
+              <View style={styles.divider} />
+              <TouchableOpacity
+                style={styles.row}
+                onPress={() => navigation.navigate('Paywall')}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.rowText}>Unlock Unlimited Scans</Text>
+                <Ionicons name="chevron-forward" size={18} color="#9aa3ad" />
+              </TouchableOpacity>
+            </>
+          ) : null}
+          <View style={styles.divider} />
+          <TouchableOpacity style={styles.row} onPress={handleRestore} activeOpacity={0.9}>
+            <Text style={styles.rowText}>Restore Purchase</Text>
+            <Ionicons name="chevron-forward" size={18} color="#9aa3ad" />
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Data</Text>
           <TouchableOpacity style={styles.row} onPress={handleClearHistory} activeOpacity={0.9}>
@@ -145,6 +228,19 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: rowBorder,
+  },
+  errorRow: {
+    paddingBottom: 10,
+    gap: 2,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#c0392b',
+  },
+  errorAction: {
+    fontSize: 13,
+    color: accent,
+    fontWeight: '700',
   },
   aboutCard: {
     backgroundColor: sectionBg,
