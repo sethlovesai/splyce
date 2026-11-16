@@ -114,7 +114,9 @@ const HomeScreen: React.FC = () => {
             <Image source={require('../../assets/images/splyce-logo-green.png')} style={styles.logo} />
             <View>
               {/* <Text style={styles.heroSubtitle}>Welcome to</Text> */}
-              <Text style={styles.heroTitle}>Splyce</Text>
+              <Text style={styles.heroTitle}>
+                
+              </Text>
             </View>
           </View>
           <TouchableOpacity
