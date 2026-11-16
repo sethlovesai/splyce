@@ -13,10 +13,14 @@ import { useIsFocused, useNavigation, useRoute, RouteProp } from '@react-navigat
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { RootStackParamList, ReceiptItem, Totals } from '../types/navigation';
 import { parseReceiptViaBackend } from '../services/receiptApi';
+import { recordScan } from '../services/usage';
+import { isUnlocked } from '../services/iap';
 import { GradientHeader } from '../components/GradientHeader';
+import { AnimatedCircularProgressBar } from '../components/AnimatedCircularProgressBar';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'ScanReceipt'>;
 type RouteProps = RouteProp<RootStackParamList, 'ScanReceipt'>;
@@ -44,6 +48,7 @@ const ScanReceiptScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraRef, setCameraRef] = useState<CameraView | null>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -52,6 +57,7 @@ const ScanReceiptScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [dots, setDots] = useState('');
+  const [progress, setProgress] = useState(0);
 
   // Drive the loading-phrase sequence + animated dots while processing.
   useEffect(() => {
@@ -68,6 +74,20 @@ const ScanReceiptScreen: React.FC = () => {
       clearInterval(phraseTimer);
       clearInterval(dotTimer);
     };
+  }, [isProcessing]);
+
+  // Estimated progress only — there's no real progress signal from the OCR
+  // backend (a single request/response round trip), so this eases toward 90%
+  // and holds there; it never claims 100% until the response actually lands.
+  useEffect(() => {
+    if (!isProcessing) {
+      setProgress(0);
+      return;
+    }
+    const tick = setInterval(() => {
+      setProgress((prev) => prev + (90 - prev) * 0.08);
+    }, 200);
+    return () => clearInterval(tick);
   }, [isProcessing]);
 
   const ensureCameraPermission = async () => {
@@ -170,7 +190,14 @@ const ScanReceiptScreen: React.FC = () => {
           'No items found on this image. ' +
           'Please retake the photo so the full receipt and prices are visible.'
         );
-        return; 
+        return;
+      }
+
+      // Successful parse — count it against the free-tier allowance, unless the
+      // user is unlocked (their count is never gated on). Best-effort: a
+      // usage-write failure shouldn't block a scan the user already spent time on.
+      if (!(await isUnlocked())) {
+        recordScan().catch((e) => console.warn('Failed to record scan usage:', e));
       }
 
       const parsedItems = parsed.items.length ? parsed.items : mockItems;
@@ -199,6 +226,7 @@ const ScanReceiptScreen: React.FC = () => {
         restaurantName: parsed.restaurantName ?? 'Receipt',
         totals: parsedTotals,
         mismatchWarning,
+        suggestedCategory: parsed.category ?? undefined,
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unable to parse receipt.';
@@ -251,6 +279,18 @@ const ScanReceiptScreen: React.FC = () => {
               ) : null}
             </View>
           )}
+
+          {isProcessing ? (
+            <View style={styles.processingOverlay}>
+              <AnimatedCircularProgressBar
+                value={progress}
+                size={92}
+                strokeWidth={7}
+                gaugePrimaryColor="#ffffff"
+                gaugeSecondaryColor="rgba(255, 255, 255, 0.28)"
+              />
+            </View>
+          ) : null}
         </View>
 
         {error ? (
@@ -276,7 +316,7 @@ const ScanReceiptScreen: React.FC = () => {
           )}
         </View>
 
-        <View style={styles.actions}>
+        <View style={[styles.actions, { paddingBottom: 20 + insets.bottom }]}>
           {isProcessing ? null : imageUri ? (
             <>
               <TouchableOpacity style={styles.primaryButton} onPress={handleUsePhoto} activeOpacity={0.9}>
@@ -323,7 +363,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderStyle: 'dashed',
     borderColor: '#8fd6b5',
-    borderRadius: 16,
+    borderRadius: 20,
     backgroundColor: '#ffffff',
     marginVertical: 20,
     alignItems: 'center',
@@ -332,12 +372,19 @@ const styles = StyleSheet.create({
   previewImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 12,
+    borderRadius: 16,
   },
   camera: {
     width: '100%',
     height: '100%',
-    borderRadius: 12,
+    borderRadius: 16,
+  },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16,
+    backgroundColor: 'rgba(15, 27, 45, 0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cameraIcon: {
     fontSize: 42,
@@ -383,7 +430,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   actions: {
-    paddingBottom: 8,
+    // paddingBottom is set inline (20 + safe-area bottom inset).
     // Reserve the button-stack height so swapping to the loading state doesn't
     // shrink this row and let the flex:1 camera frame above grow.
     minHeight: 176,
@@ -392,7 +439,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   primaryButton: {
-    width: '80%',
+    alignSelf: 'stretch',
     backgroundColor: '#1ec873',
     paddingVertical: 16,
     borderRadius: 14,

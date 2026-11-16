@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 type Props = {
@@ -9,8 +10,14 @@ type Props = {
   onBack?: () => void;
 };
 
+// Extra breathing room below the status bar/notch, on top of the device's own
+// safe-area inset — this is what actually varies per-device, so a fixed
+// paddingTop alone looks cramped on some phones and fine on others.
+const HEADER_TOP_BREATHING_ROOM = 20;
+
 export function GradientHeader({ title, subtitle, onBack }: Props) {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const handleBack = () => {
     if (onBack) {
@@ -23,7 +30,7 @@ export function GradientHeader({ title, subtitle, onBack }: Props) {
   };
 
   return (
-    <View style={styles.hero}>
+    <View style={[styles.hero, { paddingTop: insets.top + HEADER_TOP_BREATHING_ROOM }]}>
       <View style={styles.heroOverlay} />
       <View style={styles.heroContent}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack} hitSlop={12}>
@@ -40,7 +47,6 @@ export function GradientHeader({ title, subtitle, onBack }: Props) {
 
 const styles = StyleSheet.create({
   hero: {
-    paddingTop: 54,
     paddingBottom: 22,
     paddingHorizontal: 20,
     backgroundColor: '#1fcf7c',
