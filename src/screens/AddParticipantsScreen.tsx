@@ -13,6 +13,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Clipboard from 'expo-clipboard';
 
@@ -34,7 +35,8 @@ type RouteProps = RouteProp<RootStackParamList, 'AddParticipants'>;
 export default function AddParticipantsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { items, restaurantName, totals } = route.params;
+  const insets = useSafeAreaInsets();
+  const { items, restaurantName, totals, suggestedCategory } = route.params;
 
   const [names, setNames] = useState<string[]>(['You']);
 
@@ -181,6 +183,7 @@ export default function AddParticipantsScreen() {
       restaurantName,
       totals,
       sessionId: sessionId ?? undefined,
+      suggestedCategory,
     });
   };
 
@@ -344,7 +347,7 @@ export default function AddParticipantsScreen() {
         </View>
       </ScrollView>
       
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
         <TouchableOpacity style={styles.footerButton} onPress={handleContinue} activeOpacity={0.9}>
           <Text style={styles.footerText}>Continue to Items</Text>
         </TouchableOpacity>
@@ -661,16 +664,16 @@ const styles = StyleSheet.create({
   },
   footer: {
     position: 'absolute',
-    bottom: 30,
+    bottom: 0,
     left: 0,
     right: 0,
-    padding: 16,
+    padding: 20,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
   },
   footerButton: {
-    width: '80%',
+    alignSelf: 'stretch',
     backgroundColor: '#1ec873',
     paddingVertical: 16,
     alignItems: 'center',

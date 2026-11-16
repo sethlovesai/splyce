@@ -11,6 +11,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   RootStackParamList,
   SummaryEntry,
@@ -45,7 +46,8 @@ const PARTICIPANT_COLORS = ['#1ec873', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6
 const SelectItemsScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { items: rawItems, participants, restaurantName, totals, sessionId } = route.params;
+  const insets = useSafeAreaInsets();
+  const { items: rawItems, participants, restaurantName, totals, sessionId, suggestedCategory } = route.params;
 
   // Expand quantities to unit-level rows. Uses the same helper that builds the
   // live session, so each expanded row's id matches a live session item id.
@@ -174,6 +176,7 @@ const SelectItemsScreen: React.FC = () => {
       restaurantName,
       totals,
       summary,
+      suggestedCategory,
     });
   };
 
@@ -305,6 +308,7 @@ const SelectItemsScreen: React.FC = () => {
       restaurantName,
       totals,
       summary,
+      suggestedCategory,
     });
   };
 
@@ -460,7 +464,7 @@ const SelectItemsScreen: React.FC = () => {
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
         {sessionId ? (
           <TouchableOpacity
             style={styles.closeButton}
@@ -622,8 +626,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    padding: 30,
-    paddingTop: 20,
+    padding: 20,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderColor: '#e6ecf2',
@@ -636,9 +639,9 @@ const styles = StyleSheet.create({
   },
   calculateButton: {
     alignSelf: 'stretch',
-    backgroundColor: '#5b4ddb',
+    backgroundColor: '#1ec873',
     paddingVertical: 16,
-    borderRadius: 999,
+    borderRadius: 14,
     alignItems: 'center',
   },
   calculateButtonDisabled: {

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RootStackParamList, ReceiptItem } from '../types/navigation';
 import { GradientHeader } from '../components/GradientHeader';
@@ -26,7 +27,8 @@ type RouteProps = RouteProp<RootStackParamList, 'ReceiptReview'>;
 export default function ReceiptReviewScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { items, totals, restaurantName } = route.params;
+  const insets = useSafeAreaInsets();
+  const { items, totals, restaurantName, suggestedCategory } = route.params;
 
   const [editableItems, setEditableItems] = React.useState(
     items.map((item, index) => ({
@@ -266,6 +268,7 @@ export default function ReceiptReviewScreen() {
       items: cleanedItems,
       restaurantName,
       totals: updatedTotals,
+      suggestedCategory,
     });
   };
 
@@ -283,7 +286,7 @@ export default function ReceiptReviewScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: 32 + insets.bottom }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -675,7 +678,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
-    paddingBottom: 40,
+    // paddingBottom is set inline (32 + safe-area bottom inset).
   },
   card: {
     backgroundColor: '#ffffff',

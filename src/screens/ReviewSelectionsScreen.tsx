@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'rea
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GradientHeader } from '../components/GradientHeader';
 import { RootStackParamList, ReceiptItem, SummaryEntry } from '../types/navigation';
@@ -16,7 +17,8 @@ const PARTICIPANT_COLORS = ['#1ec873', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6
 export default function ReviewSelectionsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { items, selections, participants, restaurantName, totals, summary } = route.params;
+  const insets = useSafeAreaInsets();
+  const { items, selections, participants, restaurantName, totals, summary, suggestedCategory } = route.params;
   const totalBill = totals.total ?? totals.subtotal + totals.tax + totals.tip + (totals.serviceCharge ?? 0);
 
   const getColor = (user: string) => {
@@ -25,7 +27,7 @@ export default function ReviewSelectionsScreen() {
   };
 
   const proceedToSummary = () => {
-    navigation.navigate('Summary', { summary, restaurantName, totals });
+    navigation.navigate('Summary', { summary, restaurantName, totals, suggestedCategory });
   };
 
   const handleContinue = () => {
@@ -73,7 +75,7 @@ export default function ReviewSelectionsScreen() {
         </View>
 
       </ScrollView>
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
         {/* <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.goBack()} activeOpacity={0.9}>
           <Text style={styles.secondaryText}>Back to Selection</Text>
         </TouchableOpacity> */}
