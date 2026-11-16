@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SummaryEntry } from '../types/navigation';
+import { DEFAULT_CATEGORY } from '../utils/categories';
 
 export type StoredReceipt = {
   id: string;
@@ -7,6 +8,7 @@ export type StoredReceipt = {
   total: number;
   date: string; // ISO string
   summary: SummaryEntry[];
+  category: string;
 };
 
 const STORAGE_KEY = 'splyce:receipts';
@@ -17,7 +19,8 @@ export async function getReceipts(): Promise<StoredReceipt[]> {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed;
+      // Receipts saved before the category field existed don't have one.
+      return parsed.map((r) => ({ category: DEFAULT_CATEGORY, ...r }));
     }
     return [];
   } catch (e) {

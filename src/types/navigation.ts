@@ -41,6 +41,9 @@ export type RootStackParamList = {
       parsedSubtotal: number;
       delta: number;
     };
+    // LLM-suggested spending category from the OCR parse — carried through to
+    // Summary to pre-select the category picker; always user-overridable.
+    suggestedCategory?: string;
   };
   BillHistory: undefined;
   PrivacyPolicy: undefined;
@@ -52,11 +55,13 @@ export type RootStackParamList = {
     restaurantName: string;
     totals: Totals;
     summary: SummaryEntry[];
+    suggestedCategory?: string;
   };
   AddParticipants: {
     items: ReceiptItem[];
     restaurantName: string;
     totals: Totals;
+    suggestedCategory?: string;
   };
   SelectItems: {
     items: ReceiptItem[];
@@ -64,11 +69,15 @@ export type RootStackParamList = {
     restaurantName: string;
     totals: Totals;
     sessionId?: string; // present when a live session was started on the participants screen
+    suggestedCategory?: string;
   };
   Summary: {
     summary: SummaryEntry[];
     restaurantName: string;
     totals: Totals;
+    suggestedCategory?: string;
   };
   Settings: undefined;
+  Paywall: undefined;
+  Analytics: undefined;
 };

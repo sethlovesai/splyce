@@ -2,10 +2,12 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Share } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types/navigation';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { GradientHeader } from '../components/GradientHeader';
 import { addReceipt } from '../storage/receipts';
+import { RECEIPT_CATEGORIES, normalizeCategory } from '../utils/categories';
 
 type RouteProps = RouteProp<RootStackParamList, 'Summary'>;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Summary'>;
@@ -13,9 +15,13 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Summary'>;
 const SummaryScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<RouteProps>();
-  const { summary, restaurantName, totals } = route.params;
+  const insets = useSafeAreaInsets();
+  const { summary, restaurantName, totals, suggestedCategory } = route.params;
   const totalBill = totals.subtotal + totals.tax + totals.tip;
   const taxRate = totals.taxRate ?? (totals.subtotal > 0 ? (totals.tax / totals.subtotal) * 100 : 0);
+  // Pre-selected from the OCR call's LLM guess (if any); always a plain tap
+  // to correct, so a wrong guess never silently ends up in the spending chart.
+  const [category, setCategory] = React.useState<string>(() => normalizeCategory(suggestedCategory));
   const savedRef = React.useRef(false);
   const saveReceipt = async () => {
     if (savedRef.current) return;
@@ -26,6 +32,7 @@ const SummaryScreen: React.FC = () => {
       total: totalBill,
       date: new Date().toISOString(),
       summary,
+      category,
     });
   };
 
@@ -64,6 +71,23 @@ const SummaryScreen: React.FC = () => {
           </View>
         </View>
 
+        <Text style={styles.categoryLabel}>Category</Text>
+        <View style={styles.categoryRow}>
+          {RECEIPT_CATEGORIES.map((c) => {
+            const selected = c === category;
+            return (
+              <TouchableOpacity
+                key={c}
+                style={[styles.categoryChip, selected && styles.categoryChipSelected]}
+                onPress={() => setCategory(c)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.categoryChipText, selected && styles.categoryChipTextSelected]}>{c}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <Text style={styles.sectionTitle}>Who Owes What</Text>
         <View style={styles.peopleList}>
           {summary.map((person) => {
@@ -94,7 +118,7 @@ const SummaryScreen: React.FC = () => {
           })}
         </View>
       </ScrollView>
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
         <TouchableOpacity style={styles.shareButton} onPress={shareReceipt} activeOpacity={0.9}>
           <Ionicons name="share-social-outline" size={18} color="#1ec873" />
           <Text style={styles.shareText}>Share receipt</Text>
@@ -144,6 +168,38 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f1b2d',
     marginBottom: 10,
+  },
+  categoryLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#7a8a9b',
+    marginBottom: 8,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 18,
+  },
+  categoryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dfe5ec',
+  },
+  categoryChipSelected: {
+    backgroundColor: '#1ec873',
+    borderColor: '#1ec873',
+  },
+  categoryChipText: {
+    color: '#4a5565',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  categoryChipTextSelected: {
+    color: '#ffffff',
   },
   peopleList: {},
   personCard: {
@@ -214,10 +270,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderColor: '#e6ecf2',
-    backgroundColor: '#ffffff',
+    padding: 20,
     gap: 10,
   },
   shareButton: {

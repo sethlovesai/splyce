@@ -24,6 +24,7 @@ export type BackendReceipt = {
     total?: number;
     taxRate?: number;
   };
+  category?: string | null;
 };
 
 export async function parseReceiptViaBackend(base64: string): Promise<BackendReceipt> {
